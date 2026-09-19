@@ -54,4 +54,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // data/Logic.kt 순수 함수 단위 테스트 (./gradlew test). APK 에는 포함되지 않음
+    testImplementation("junit:junit:4.13.2")
 }
