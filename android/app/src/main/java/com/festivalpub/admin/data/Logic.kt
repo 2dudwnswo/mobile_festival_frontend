@@ -61,6 +61,27 @@ fun Snapshot.ordersForTable(t: TableInfo): List<Order> {
         .sortedBy { it.createdAt }
 }
 
+// ---------- 대시보드 격자 (스크롤 없이 한 화면) ----------
+
+/** 격자 줄 수. 보통 서버의 rows 이고, 테이블 수가 rows*cols 보다 많으면 모자란 줄을 늘린다. */
+fun gridRows(tableCount: Int, rows: Int, cols: Int): Int {
+    val c = cols.coerceAtLeast(1)
+    val needed = (tableCount + c - 1) / c
+    return maxOf(rows, needed, 1)
+}
+
+/**
+ * 정사각형 타일 한 변의 길이(dp) = min(가로 폭 ÷ 열 수, 사용 가능한 높이 ÷ 줄 수).
+ * 타일 사이 간격 [gap] 은 먼저 빼고 나눈다. 공간이 없으면 0.
+ */
+fun gridTileSize(width: Float, height: Float, rows: Int, cols: Int, gap: Float): Float {
+    val c = cols.coerceAtLeast(1)
+    val r = rows.coerceAtLeast(1)
+    val byWidth = (width - gap * (c - 1)) / c
+    val byHeight = (height - gap * (r - 1)) / r
+    return minOf(byWidth, byHeight).coerceAtLeast(0f)
+}
+
 // ---------- 표시용 포맷 ----------
 
 fun formatPhone(p: String): String = when (p.length) {

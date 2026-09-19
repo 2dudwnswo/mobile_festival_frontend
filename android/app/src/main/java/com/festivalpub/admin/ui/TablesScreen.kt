@@ -4,19 +4,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,8 +37,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.festivalpub.admin.AppViewModel
@@ -56,9 +54,14 @@ import com.festivalpub.admin.data.formatClock
 import com.festivalpub.admin.data.formatPhone
 import com.festivalpub.admin.data.formatRemaining
 import com.festivalpub.admin.data.formatWon
+import com.festivalpub.admin.data.gridRows
+import com.festivalpub.admin.data.gridTileSize
 import com.festivalpub.admin.data.ordersForTable
 import com.festivalpub.admin.data.remainingMs
 import com.festivalpub.admin.data.state
+
+private val GRID_GAP = 6.dp
+private val TILE_ROOMY = 44.dp // 이보다 작은 타일은 남은 시간 글자를 생략
 
 // ============================================================
 // 1-1 테이블 현황 대시보드
@@ -85,21 +88,32 @@ fun TablesScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
             }
         }
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(s.cols.coerceAtLeast(1)),
-            contentPadding = PaddingValues(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.weight(1f),
-        ) {
-            items(snap.tables, key = { it.no }) { t ->
-                TableTile(
-                    table = t,
-                    state = states[t.no] ?: TableState.EMPTY,
-                    remainingMs = t.remainingMs(s, now),
-                    now = now,
-                    onClick = { selectedNo = t.no },
-                )
+        // 웹서버가 정한 가로×세로 격자를 스크롤 없이 한 화면에 맞춘다.
+        // 타일 한 변 = min(가로 폭 ÷ 열 수, 사용 가능한 높이 ÷ 줄 수)
+        val cols = s.cols.coerceAtLeast(1)
+        val rows = gridRows(snap.tables.size, s.rows, cols)
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(10.dp)) {
+            val tile = gridTileSize(maxWidth.value, maxHeight.value, rows, cols, GRID_GAP.value).dp
+            Column(Modifier.align(Alignment.TopCenter), verticalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+                for (r in 0 until rows) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(GRID_GAP)) {
+                        for (c in 0 until cols) {
+                            val t = snap.tables.getOrNull(r * cols + c)
+                            if (t == null) {
+                                Spacer(Modifier.size(tile))
+                            } else {
+                                TableTile(
+                                    table = t,
+                                    state = states[t.no] ?: TableState.EMPTY,
+                                    remainingMs = t.remainingMs(s, now),
+                                    now = now,
+                                    size = tile,
+                                    onClick = { selectedNo = t.no },
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -116,26 +130,34 @@ private fun TableTile(
     state: TableState,
     remainingMs: Long?,
     now: Long,
+    size: Dp,
     onClick: () -> Unit,
 ) {
     val blink = state == TableState.OVERTIME && (now / 1000) % 2 == 0L
     val bg = PubColors.of(state).copy(alpha = if (blink) 0.6f else 1f)
     val fg = if (state == TableState.EMPTY) Color(0xFF37474F) else Color.White
+    // 글자 크기는 타일 크기에 비례 (기기 글꼴 크기 설정과 무관하게 타일 안에 들어가도록 dp 기준)
+    val roomy = size >= TILE_ROOMY
+    val density = LocalDensity.current
+    val noSize = with(density) { (size * if (roomy) 0.30f else 0.42f).coerceAtMost(28.dp).toSp() }
+    val subSize = with(density) { (size * 0.19f).coerceAtMost(15.dp).toSp() }
 
     Box(
         Modifier
-            .aspectRatio(0.9f)
-            .clip(RoundedCornerShape(10.dp))
+            .size(size)
+            .clip(RoundedCornerShape((size * 0.14f).coerceAtMost(10.dp)))
             .background(bg)
-            .clickable(onClick = onClick)
-            .padding(2.dp),
+            .clickable(onClick = onClick),
     ) {
         Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("${table.no}", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = fg)
-            if (remainingMs != null) {
-                Text(formatRemaining(remainingMs), fontSize = 12.sp, color = fg, maxLines = 1)
-            } else {
-                Text("빈자리", fontSize = 11.sp, color = fg.copy(alpha = 0.6f), maxLines = 1)
+            Text("${table.no}", fontSize = noSize, fontWeight = FontWeight.Bold, color = fg, maxLines = 1)
+            // 타일이 작으면(열이 많을 때) 번호와 색만. 남은 시간은 상세 시트에서 본다.
+            if (roomy) {
+                if (remainingMs != null) {
+                    Text(formatRemaining(remainingMs), fontSize = subSize, color = fg, maxLines = 1)
+                } else {
+                    Text("빈자리", fontSize = subSize, color = fg.copy(alpha = 0.6f), maxLines = 1)
+                }
             }
         }
     }
