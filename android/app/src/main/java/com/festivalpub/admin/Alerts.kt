@@ -1,9 +1,11 @@
 package com.festivalpub.admin
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -22,12 +24,23 @@ class Alerts(context: Context) {
     private val tone: ToneGenerator? = runCatching { ToneGenerator(AudioManager.STREAM_ALARM, 90) }.getOrNull()
 
     fun overtime() {
-        vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 400, 200, 400, 200, 400), -1))
+        vibrate(VibrationEffect.createWaveform(longArrayOf(0, 400, 200, 400, 200, 400), -1))
         tone?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 1200)
     }
 
     fun imminent() {
-        vibrator?.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
+        vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
+    }
+
+    // 알람 용도로 진동해야 '터치 진동 끄기' 설정에 묻히지 않는다 (기본값은 TOUCH/UNKNOWN 취급)
+    private fun vibrate(effect: VibrationEffect) {
+        val v = vibrator ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            v.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM))
+        } else {
+            @Suppress("DEPRECATION")
+            v.vibrate(effect, AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM).build())
+        }
     }
 
     fun release() {

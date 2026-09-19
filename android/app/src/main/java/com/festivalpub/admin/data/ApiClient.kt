@@ -15,7 +15,8 @@ import okhttp3.WebSocketListener
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class ApiException(message: String) : Exception(message)
+/** [offline] = 서버에 닿지 못함(응답 없음). false 면 서버가 4xx/5xx 로 거절한 것. */
+class ApiException(message: String, val offline: Boolean = false) : Exception(message)
 
 /** 노트북 서버와의 REST + WebSocket 통신 */
 class ApiClient(rawUrl: String) {
@@ -46,7 +47,7 @@ class ApiClient(rawUrl: String) {
                 }
             }
         } catch (e: IOException) {
-            throw ApiException("서버에 연결할 수 없습니다")
+            throw ApiException("서버에 연결할 수 없습니다", offline = true)
         }
     }
 

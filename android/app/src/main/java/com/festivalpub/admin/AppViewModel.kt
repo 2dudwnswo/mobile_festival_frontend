@@ -33,6 +33,8 @@ import okhttp3.WebSocketListener
 
 enum class Conn { DISCONNECTED, CONNECTING, CONNECTED }
 
+private const val OFFLINE_RETRIES = 30 // 2초 간격 → 약 1분
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("pub", Context.MODE_PRIVATE)
@@ -174,6 +176,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         method: String = "POST",
         extra: JsonObject? = null,
         onOk: () -> Unit = {},
+        // 두 번 보내도 결과가 같은 요청만 true. 서버에 닿지 못하면 잠시 재시도한다.
+        retryWhileOffline: Boolean = false,
     ) {
         val client = api ?: run { _messages.tryEmit("서버에 연결되지 않았습니다"); return }
         val body = buildJsonObject {
@@ -181,11 +185,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             extra?.forEach { (k, v) -> put(k, v) }
         }
         viewModelScope.launch {
-            try {
-                client.send(method, path, body)
-                onOk()
-            } catch (e: ApiException) {
-                _messages.tryEmit(e.message ?: "요청 실패")
+            var attempt = 0
+            while (true) {
+                try {
+                    client.send(method, path, body)
+                    onOk()
+                    return@launch
+                } catch (e: ApiException) {
+                    if (retryWhileOffline && e.offline && ++attempt < OFFLINE_RETRIES) {
+                        delay(2000)
+                        continue
+                    }
+                    _messages.tryEmit(e.message ?: "요청 실패")
+                    return@launch
+                }
             }
         }
     }
@@ -214,7 +227,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onOk = onOk,
     )
 
-    fun callWaiting(id: Int) = request("/api/waitings/$id/call")
+    // 탭 즉시 전화가 걸리므로, 서버가 잠깐 끊겨 있어도 호출 기록이 남도록 재시도한다.
+    // (전화 앱이 앞에 떠 있는 동안에는 오류 안내를 볼 수 없어서 [무응답] 버튼이 영영 안 나오게 됨)
+    fun callWaiting(id: Int) = request("/api/waitings/$id/call", retryWhileOffline = true)
     fun noShow(id: Int) = request("/api/waitings/$id/no-show")
     fun restoreWaiting(id: Int) = request("/api/waitings/$id/restore")
     fun cancelWaiting(id: Int) = request("/api/waitings/$id/cancel")
