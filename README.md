@@ -1,5 +1,9 @@
 # 축제 주점 관리자 앱 (Android · Kotlin)
 
+> **개발 안전장치:** debug는 기본 Firebase 에뮬레이터이며 운영 DB에 접속하지 않습니다.
+> 테스트 방법은 [firebase/README.md](firebase/README.md)를 따르세요. 운영 접속은 3단계 별도 승인 후에만 합니다.
+> 이 저장소의 규칙은 에뮬레이터 전용입니다. **firebase deploy 금지**. 아래 과거 설계 설명은 v2와 다를 수 있으며 전체 문서 정리는 4단계에서 진행합니다.
+
 ```
 mobile_festival_frontend/
 ├─ android/          ← 관리자 앱 (Android Studio로 열기)
@@ -29,16 +33,10 @@ mobile_festival_frontend/
 3. 폰마다 앱 첫 화면에서 이 비밀번호를 **한 번만** 입력하면 로그인이 유지됩니다. 설정 ⚙ → [로그아웃]으로 해제합니다.
    - 비밀번호가 샜다면 콘솔에서 바꾸면 되고, 그러면 모든 폰에서 다시 입력해야 합니다.
 
-### 1-3. 보안 규칙·색인 배포
-```
-cd firebase
-npm install
-npx firebase login
-npx firebase deploy --only firestore:rules,firestore:indexes --project <Firebase 프로젝트 ID>
-```
-- 규칙: 스태프 공용 계정으로 로그인한 앱만 읽기·쓰기, 앱은 입금 상태를 못 바꿈 (자세한 내용은 `docs/FIREBASE.md` 6장)
-- 색인: 오늘의 입금확인 주문 조회용 (`orders: paymentStatus + createdAt`). 없으면 앱에 "Firestore 색인이 필요합니다"가 뜹니다.
-- 규칙을 고쳤다면 배포 전에 `npm run test:rules` (에뮬레이터에서 규칙 테스트, Java 21 이상 필요)
+### 1-3. 보안 규칙·색인 — 배포 금지
+
+운영 규칙은 동현이 관리합니다. 이 저장소에서는 로컬 에뮬레이터 테스트만 실행합니다.
+[2단계 로컬 검증 안내](firebase/README.md)를 참고하세요.
 
 ## 2. 앱 실행
 
