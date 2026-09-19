@@ -44,16 +44,45 @@ $env:FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099'
 npm run seed -- --reset
 ```
 
-`--reset`은 로컬 Firestore 데이터를 비운 뒤 다시 만든다. Auth에는 테스트 계정만 추가하며 운영과 무관하다. 호스트 변수가 없거나 외부 주소/다른 포트이면 초기화 전에 거부한다. 모든 전화번호는 010-0000-00xx 범위의 고정 가짜 번호다. 실제 전화 버튼은 누르지 않는다.
+`--reset`은 로컬 Firestore 데이터를 비운 뒤 다시 만든다. 웨이팅은 스펙 v3 구조로 `waiting_private/{전화번호}` + `waiting_public/{id}` 짝 4쌍(일반·VIP·NO_SHOW·CANCELLED)을 `public_id`로 연결해 만든다. Auth에는 테스트 계정만 추가하며 운영과 무관하다. 호스트 변수가 없거나 외부 주소/다른 포트이면 초기화 전에 거부한다. 모든 전화번호는 010-0000-00xx 범위의 고정 가짜 번호다. 실제 전화 버튼은 누르지 않는다.
+
+## 보안 규칙 (`firestore.rules`)
+
+- **운영(`mobokfestivalpub`)에 배포된 규칙 전문을 한 글자도 바꾸지 않고 그대로 둔다.** 규칙 파일에는 주석을 넣지 않고, 설명은 여기에 적는다.
+  (예전에는 스펙 표를 흉내 낸 규칙을 써서, 없는 `waiting` 컬렉션 구독이 운영에서만 거부되는 문제를 로컬에서 잡지 못했다.)
+- 운영 규칙이 바뀌면 동현에게 전문을 받아 이 파일을 통째로 교체하고 `npm run test:rules`를 다시 돌린다. 이 파일을 운영에 배포하지 않는다.
+- 요약 (스펙 v3 3장):
+
+| 컬렉션 | 손님(비로그인) | 스태프(로그인) |
+|---|---|---|
+| `tables`, `orders` | 접근 불가 | 읽기·쓰기 |
+| `menu` | 읽기 | 읽기·쓰기 |
+| `waiting_private/{전화번호}` | `get`(번호 문서 1개), 생성(`is_vip=false`·`WAITING`·`phone`=문서 ID·`party_size` 정수), `CANCELLED`/`SEATED` 번호 재등록(덮어쓰기) | `list`·생성(VIP 포함)·수정·삭제 |
+| `waiting_public/{autoId}` | 읽기, 생성(`is_vip=false`·`WAITING`) | 읽기·생성(VIP 포함)·수정·삭제 |
+| 그 밖의 경로(예전 `waiting`, `config` 등) | 거부 | 거부 |
 
 ## 검증의 범위와 한계
 
-- Node 테스트: v2 규칙 권한표와 SDK의 트랜잭션/배치/쿼리/오프라인 동작. Android Repository를 직접 실행하는 테스트는 아니다.
-- Android JVM 테스트: 실제 Mapper/Logic의 시간·금액·정렬·묶음·배지·종료 보호 계산.
-- Firestore 에뮬레이터는 운영 복합 색인 존재를 보장하지 않는다. 여기에는 스펙에 이미 있다는 두 색인만 기록한다.
-- 규칙은 스펙 3장의 권한표를 흉내 낸다. 실제 배포된 규칙을 내려받지 않았다. 로그인 스태프에게 넓은 쓰기 권한이 있어 상태 전이·추가 필드를 규칙에서 강제하지 않는다.
-- WriteBatch는 주문 줄과 합계의 원자성은 보장하지만, 전송 직전 읽기와 배치 사이의 동시 이용종료까지 잠그지는 않는다. 이 제약을 임의로 새 필드·규칙으로 해결하지 않는다.
-- 입금확인·연장·호출 등 단순 update는 트랜잭션과 달리 서버의 최신 상태에 대한 조건부 쓰기가 아니다.
+- Node 테스트(`test/rules.test.mjs`): 위 실제 규칙의 권한 — 손님 get/list, 재등록 허용·차단, VIP 생성, 스태프 상태 변경, 스펙 밖 경로 거부. 로그인/로그아웃, TCP 단절 시 트랜잭션 실패.
+- **앱 Repository 계측 테스트**(`android/app/src/androidTest/.../RepositoryV3EmulatorTest.kt`): 앱 코드 그대로 에뮬레이터에 붙여 VIP 등록(신규/기존 WAITING 차단/CANCELLED 덮어쓰기), 무응답·복귀·취소의 private·public 동시 변경, 착석 트랜잭션(테이블+private+public), 동시 착석, `public_id` 누락·public 문서 없음을 검증한다.
+- Android JVM 테스트: Mapper/Logic 의 시간·금액·정렬·묶음·배지·종료 보호, 전화번호 정규화, 상태 변경 대상 판단.
+- Firestore 에뮬레이터는 복합 색인 존재를 강제하지 않는다. `firestore.indexes.json`에는 운영에 배포된 두 색인(`waiting_private`, `orders`)만 기록한다.
+- WriteBatch 는 주문 줄과 합계의 원자성은 보장하지만, 전송 직전 읽기와 배치 사이의 동시 이용종료까지 잠그지는 않는다.
+- 입금확인·연장·호출 등 단순 update 는 트랜잭션과 달리 서버의 최신 상태에 대한 조건부 쓰기가 아니다.
+
+### 계측 테스트 실행 (실제 폰 + Firebase 에뮬레이터)
+
+```powershell
+# 1) 에뮬레이터 (firebase 폴더, 별도 터미널)
+npm run emulators
+# 2) 폰 연결 (adb reverse 8080/9099)
+./scripts/connect-usb.ps1
+# 3) android 폴더에서 (debug = 에뮬레이터 모드)
+./gradlew connectedDebugAndroidTest
+```
+
+- 테스트는 에뮬레이터 모드이고 프로젝트 ID가 `demo-`로 시작하지 않으면 바로 실패한다(운영 DB 보호). 전화번호는 010-0000-00xx만 쓴다.
+- `connectedDebugAndroidTest`는 폰의 앱을 에뮬레이터 모드 debug 로 덮어쓴다. 운영 연결 debug 가 필요하면 다시 `-PfirebaseDebugProduction=true`로 설치한다.
 
 ## 폰에서 확인할 시나리오
 
@@ -65,9 +94,9 @@ npm run seed -- --reset
 | c | 메뉴 여러 줄 전송과 합계, 전송 중 재전송 방지 |
 | d | 시드의 1번 테이블 5분 미확인 배지, 금액 확인창, 확인 후 타이머 그대로 |
 | e | NO_SHOW 아래 흐림, 복귀 순서와 호출 경과 표시, 3분 이후 버튼 |
-| f | VIP 우선 표시, 자동 ID 비노출 |
+| f | VIP 우선 표시, 전화번호 문서 ID를 순번으로 쓰지 않음, VIP 등록 시 이미 대기 중인 번호 안내 |
 | g | 같은 테이블/같은 시각 묶음, 조리완료 확인창 및 전체 줄 제거, 새 주문 알림음 |
-| h | 로그아웃 후 로그인 화면, 로컬 규칙 권한 거절 시 로그인 화면 이동 |
+| h | 로그아웃 확인창 → 로그인 화면. 권한 거부 시 로그아웃하지 않고 상단에 막힌 컬렉션 표시 |
 | i | 에뮬레이터 중지 또는 reverse 해제 시 빨간 오류·캐시 유지, 트랜잭션 실패 스낵바, 복구 후 큐 전송 |
 
 LTE 끊김과 USB 로컬 에뮬레이터 단절은 다르다. USB 테스트는 reverse/에뮬레이터를 끊어 검증하며 LTE/운영 연결은 3단계에서 별도로 확인한다.

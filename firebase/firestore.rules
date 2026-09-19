@@ -1,15 +1,45 @@
 rules_version = '2';
-// 에뮬레이터 전용. v2 스펙 3장의 권한표를 흉내 낸다. 운영 규칙 원본이 아니다.
 service cloud.firestore {
-  match /databases/{database}/documents {
-    function staff() { return request.auth != null; }
-    match /tables/{id} { allow read, write: if staff(); }
-    match /menu/{id} { allow read: if true; allow write: if staff(); }
-    match /orders/{id} { allow read, write: if staff(); }
-    match /waiting/{id} {
-      allow read: if true;
-      allow create: if staff() || request.resource.data.is_vip == false;
-      allow update, delete: if staff();
-    }
-  }
+match /databases/{database}/documents {
+match /tables/{tableId} {
+allow read, write: if request.auth != null;
+}
+match /menu/{menuId} {
+allow read: if true;
+allow write: if request.auth != null;
+}
+match /orders/{orderId} {
+allow read, write: if request.auth != null;
+}
+match /waiting_private/{phone} {
+allow get: if true;
+allow list: if request.auth != null;
+allow create: if request.auth != null
+|| (
+request.resource.data.is_vip == false
+&& request.resource.data.status == 'WAITING'
+&& request.resource.data.phone == phone
+&& request.resource.data.party_size is int
+);
+allow update: if request.auth != null
+|| (
+resource.data.status in ['CANCELLED', 'SEATED']
+&& request.resource.data.is_vip == false
+&& request.resource.data.status == 'WAITING'
+&& request.resource.data.phone == phone
+&& request.resource.data.party_size is int
+&& request.resource.data.called_at == null
+);
+allow delete: if request.auth != null;
+}
+match /waiting_public/{id} {
+allow read: if true;
+allow create: if request.auth != null
+|| (
+request.resource.data.is_vip == false
+&& request.resource.data.status == 'WAITING'
+);
+allow update, delete: if request.auth != null;
+}
+}
 }

@@ -10,9 +10,9 @@ try {
   await env.withSecurityRulesDisabled(async ctx => {
     const db = ctx.firestore(); const data = fixtures(); const batch = writeBatch(db);
     for (const [path, value] of [...data.tables, ...data.menus]) batch.set(doc(db, path), value);
-    for (const [name, entries] of [['waiting', data.waitings], ['orders', data.orders]]) {
-      for (const [, value] of entries) batch.set(doc(collection(db, name)), value);
-    }
+    // v3: waiting_private/{전화번호} 와 waiting_public/{id} 를 짝으로 (private.public_id 로 연결)
+    for (const w of data.waitings) { batch.set(doc(db, w.privatePath), w.private); batch.set(doc(db, w.publicPath), w.public); }
+    for (const [, value] of data.orders) batch.set(doc(collection(db, 'orders')), value);
     await batch.commit();
   });
   const response = await fetch(`http://${endpoints.auth.host}:${endpoints.auth.port}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake-emulator-key`, {
@@ -23,5 +23,5 @@ try {
     const result = await response.json();
     if (result.error?.message !== 'EMAIL_EXISTS') throw new Error('로컬 테스트 계정 생성 실패');
   }
-  console.log('로컬 시드 완료: 테이블 30, 메뉴 4, 일반/VIP/NO_SHOW 3팀, 주문 2줄. 운영 접속 없음.');
+  console.log('로컬 시드 완료: 테이블 30, 메뉴 4, 웨이팅 private/public 짝 4쌍(일반·VIP·NO_SHOW·CANCELLED), 주문 2줄. 운영 접속 없음.');
 } finally { await env.cleanup(); }

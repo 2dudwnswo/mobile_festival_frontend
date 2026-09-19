@@ -34,7 +34,16 @@ test('외부 TCP와 HTTP를 실제 연결 전에 차단', () => {
 });
 test('시드 번호와 컬렉션은 v2 허용 범위', () => {
   const f = fixtures(1000000); assert.equal(f.tables.length,30); assert.equal(f.menus.length,4);
-  for (const [, w] of f.waitings) assert.match(w.phone,/^010000000\d{2}$/);
+  for (const w of f.waitings) {
+    assert.match(w.private.phone,/^010000000\d{2}$/);
+    assert.equal(w.privatePath, `waiting_private/${w.private.phone}`);           // 문서 ID = 전화번호
+    assert.equal(w.publicPath, `waiting_public/${w.private.public_id}`);         // public_id 로 짝 연결
+    assert.equal(w.public.phone, undefined);                                     // public 에는 전화번호 없음
+    assert.equal(w.public.status, w.private.status); assert.equal(w.public.created_at, w.private.created_at);
+    assert.ok(Number.isInteger(w.private.party_size));                           // 규칙의 is int
+  }
+  assert.deepEqual(f.waitings.map(w=>w.private.status).sort(), ['CANCELLED','NO_SHOW','WAITING','WAITING']);
+  assert.ok(f.waitings.some(w=>w.private.is_vip));
   assert.equal(f.orders[0][1].created_at, f.orders[1][1].created_at);
   assert.equal(f.orders.reduce((n,[,o])=>n+o.menu_price*o.quantity,0),f.tables[0][1].total_amount);
 });
