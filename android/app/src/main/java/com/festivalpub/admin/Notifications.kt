@@ -60,7 +60,13 @@ object Notifications {
             nm.cancel(ID_OVERTIME)
             return
         }
-        if (!canNotify(context)) return
+        // 알림 권한을 거부했으면 상태바 알림만 생략 (진동·소리는 Alerts 가 그대로 낸다)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         val n = NotificationCompat.Builder(context, CH_OVERTIME)
             .setSmallIcon(R.drawable.ic_stat_pub)
             .setContentTitle("${tableNos.joinToString(", ")}번 테이블 시간 초과")
@@ -75,11 +81,6 @@ object Notifications {
     }
 
     fun cancelOvertime(context: Context) = NotificationManagerCompat.from(context).cancel(ID_OVERTIME)
-
-    private fun canNotify(context: Context): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
 
     private fun openApp(context: Context, tab: Int?): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
