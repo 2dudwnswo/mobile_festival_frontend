@@ -169,7 +169,8 @@ async function handle(req, res) {
       result = o;
     } else if ((mt = p.match(/^\/api\/orders\/(\d+)\/(confirm-payment|cancel|cooked)$/)) && m === 'POST') {
       const o = findOrder(mt[1]);
-      if (mt[2] === 'confirm-payment') { if (o.paymentStatus !== 'PENDING') fail(409, '입금 대기 중인 주문이 아닙니다'); o.paymentStatus = 'PAID'; o.paidAt = now; o.paidBy = body.staff || null; }
+      // 서버/웹 측 전용 (API.md 4-5). mock 에서는 /dev 페이지의 [입금확인(서버 흉내)] 버튼이 호출한다.
+      if (mt[2] === 'confirm-payment') { if (o.paymentStatus !== 'PENDING') fail(409, '입금 대기 중인 주문이 아닙니다'); o.paymentStatus = 'PAID'; o.paidAt = now; o.paidBy = body.staff || '서버'; }
       if (mt[2] === 'cancel') { if (o.paymentStatus !== 'PENDING') fail(409, '입금 전 주문만 취소할 수 있습니다'); o.paymentStatus = 'CANCELLED'; }
       if (mt[2] === 'cooked') { if (o.paymentStatus !== 'PAID') fail(409, '입금 확인된 주문이 아닙니다'); o.cookStatus = 'DONE'; o.cookedAt = now; o.cookedBy = body.staff || null; }
       result = o;
@@ -194,6 +195,9 @@ const DEV_PAGE = `<!doctype html><meta name=viewport content="width=device-width
 <button onclick="rnd()">랜덤 5팀</button>
 <h3>대기 조회</h3><input id=lp placeholder="전화번호"> <button onclick="look()">조회</button>
 <h3>QR 주문</h3>테이블 <input id=tn type=number value=1 style="width:60px"> 메뉴ID <input id=mi type=number value=1 style="width:60px"> 수량 <input id=q type=number value=1 style="width:60px"> <button onclick="ord()">주문</button>
+<h3>입금 대기 주문 (서버 입금확인 흉내)</h3>
+<p style="color:#666;font-size:14px">실제 서버는 입금을 스스로 판단해 PAID로 바꾼다. 여기서는 버튼으로 그 상황을 흉내낸다.</p>
+<div id=pend>불러오는 중…</div>
 <pre id=out></pre>
 <script>
 const out=t=>document.getElementById('out').textContent=JSON.stringify(t,null,2);
@@ -203,6 +207,18 @@ function reg(){post('/api/waitings',{phone:v('ph'),partySize:+v('ps')})}
 async function rnd(){for(let i=0;i<5;i++){await fetch('/api/waitings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:'010'+String(Math.floor(Math.random()*1e8)).padStart(8,'0'),partySize:1+Math.floor(Math.random()*4)})})}out('5팀 등록')}
 function look(){fetch('/api/waitings/lookup?phone='+v('lp')).then(r=>r.json()).then(out)}
 function ord(){post('/api/orders',{tableNo:+v('tn'),items:[{menuId:+v('mi'),qty:+v('q')}],source:'QR'})}
+function pay(id){post('/api/orders/'+id+'/confirm-payment',{staff:'서버(mock)'})}
+function render(s){
+  const list=s.orders.filter(o=>o.paymentStatus==='PENDING');
+  const el=document.getElementById('pend');
+  if(!list.length){el.textContent='입금 대기 주문 없음';return}
+  el.innerHTML=list.map(o=>'<div style="margin:6px 0">#'+o.id+' · '+o.tableNo+'번 · '+(o.source==='STAFF'?'직원':'QR')+' · '
+    +o.items.map(i=>i.name+'×'+i.qty).join(', ')+' · '+o.total.toLocaleString()+'원 '
+    +'<button onclick="pay('+o.id+')">입금확인(서버 흉내)</button></div>').join('');
+}
+(function sock(){const ws=new WebSocket('ws://'+location.host+'/ws');
+  ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.type==='snapshot')render(m.data)};
+  ws.onclose=()=>setTimeout(sock,1000)})();
 </script>`;
 
 server.listen(PORT, '0.0.0.0', () => {

@@ -20,6 +20,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,7 +37,7 @@ import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.formatClock
 import com.festivalpub.admin.data.kitchenOrders
 import com.festivalpub.admin.data.minutesAgo
-import com.festivalpub.admin.data.pendingOrders
+import com.festivalpub.admin.data.hasNewKitchenOrder
 
 private const val SLOW_COOK_MIN = 15L
 
@@ -47,8 +48,16 @@ private const val SLOW_COOK_MIN = 15L
 @Composable
 fun KitchenScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
     val orders = snap.kitchenOrders()
-    val pendingCount = snap.pendingOrders().size
     var confirmId by remember { mutableStateOf<Int?>(null) }
+
+    // 서버가 입금을 확인해 새 주문이 들어오면 짧은 알림음. 이 화면이 떠 있을 때만 동작한다
+    // (다른 탭에서 돌아오면 prev 가 null 로 초기화되어 이미 쌓인 주문으로는 울리지 않음).
+    val ids = orders.map { it.id }.toSet()
+    var prevIds by remember { mutableStateOf<Set<Int>?>(null) }
+    LaunchedEffect(ids) {
+        if (hasNewKitchenOrder(prevIds, ids)) vm.newOrderChime()
+        prevIds = ids
+    }
 
     LazyColumn(
         contentPadding = PaddingValues(12.dp),
@@ -56,7 +65,7 @@ fun KitchenScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
     ) {
         item {
             Text(
-                "조리 대기 ${orders.size}건" + if (pendingCount > 0) " · 입금확인 전 ${pendingCount}건은 아직 표시되지 않음" else "",
+                "조리 대기 ${orders.size}건 · 입금이 확인된 주문만 표시됩니다",
                 color = Color.Gray,
                 fontSize = 13.sp,
             )

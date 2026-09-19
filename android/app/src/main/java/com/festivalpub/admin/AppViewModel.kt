@@ -252,9 +252,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onOk = onOk,
     )
 
-    fun confirmPayment(orderId: Int) = request("/api/orders/$orderId/confirm-payment")
-    fun cancelOrder(orderId: Int) = request("/api/orders/$orderId/cancel")
+    // 입금확인·주문취소는 서버가 한다 (API.md v0.2). 앱은 조리완료만 보낸다.
     fun cooked(orderId: Int) = request("/api/orders/$orderId/cooked")
+
+    /** 주방 탭에 새 주문(서버가 PAID 로 바꾼 주문)이 들어왔을 때 짧은 알림음 */
+    fun newOrderChime() = alerts.newOrder()
 
     // 설정 (시간 값만. 테이블 배치 rows/cols 는 웹서버가 관리하므로 보내지 않는다)
     fun saveSettings(s: Settings) = request(

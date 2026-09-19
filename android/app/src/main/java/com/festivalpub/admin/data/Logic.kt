@@ -39,18 +39,25 @@ fun Snapshot.activeWaitings(): List<Waiting> =
 fun Snapshot.noShowWaitings(): List<Waiting> =
     waitings.filter { it.status == "NO_SHOW" }.sortedBy { it.createdAt }
 
-fun Snapshot.pendingOrders(): List<Order> =
-    orders.filter { it.paymentStatus == "PENDING" }.sortedBy { it.createdAt }
+/**
+ * 앱이 쓰는 주문은 서버가 입금을 확인한(PAID) 것뿐이다.
+ * 스냅샷에 PENDING/CANCELLED 가 섞여 와도 여기서 걸러 무시한다. (API.md v0.2)
+ */
+val Order.paid: Boolean get() = paymentStatus == "PAID"
 
 /** 주방: 입금확인된 주문 중 조리 전인 것, 입금 순서대로 */
 fun Snapshot.kitchenOrders(): List<Order> =
-    orders.filter { it.paymentStatus == "PAID" && it.cookStatus == "WAITING" }
+    orders.filter { it.paid && it.cookStatus == "WAITING" }
         .sortedBy { it.paidAt ?: it.createdAt }
 
-/** 현재 착석 팀의 주문만 (이전 손님 주문 제외) */
+/** 주방에 새로 들어온 주문이 있는지. 처음 화면을 열었을 때(prev == null)는 알리지 않는다. */
+fun hasNewKitchenOrder(prev: Set<Int>?, current: Set<Int>): Boolean =
+    prev != null && (current - prev).isNotEmpty()
+
+/** 현재 착석 팀의 입금확인된 주문만 (이전 손님 주문 제외) */
 fun Snapshot.ordersForTable(t: TableInfo): List<Order> {
     val since = t.seatedAt ?: return emptyList()
-    return orders.filter { it.tableNo == t.no && it.createdAt >= since && it.paymentStatus != "CANCELLED" }
+    return orders.filter { it.tableNo == t.no && it.createdAt >= since && it.paid }
         .sortedBy { it.createdAt }
 }
 

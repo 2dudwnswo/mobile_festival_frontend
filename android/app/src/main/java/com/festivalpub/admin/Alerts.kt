@@ -28,6 +28,11 @@ class Alerts(context: Context) {
         tone?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 1200)
     }
 
+    /** 주방: 새 주문 도착. 진동 없이 짧은 소리 한 번 */
+    fun newOrder() {
+        tone?.startTone(ToneGenerator.TONE_PROP_BEEP2, 300)
+    }
+
     fun imminent() {
         vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE))
     }

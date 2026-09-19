@@ -30,8 +30,6 @@ object PubColors {
     val Overtime = Color(0xFFE53935)
     val Vip = Color(0xFFFFB300)
     val VipBg = Color(0xFFFFF8E1)
-    val Pending = Color(0xFF7E57C2)
-    val PendingStale = Color(0xFFD50000)
 
     fun of(state: TableState): Color = when (state) {
         TableState.EMPTY -> Empty

@@ -56,7 +56,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.activeWaitings
 import com.festivalpub.admin.data.kitchenOrders
-import com.festivalpub.admin.data.pendingOrders
 import com.festivalpub.admin.ui.AppTheme
 import com.festivalpub.admin.ui.ConnectScreen
 import com.festivalpub.admin.ui.HSpace
@@ -133,7 +132,6 @@ private fun MainScaffold(
     }
 
     val waitingCount = snap.activeWaitings().size
-    val pendingCount = snap.pendingOrders().size
     val kitchenCount = snap.kitchenOrders().size
 
     Scaffold(
@@ -162,7 +160,6 @@ private fun MainScaffold(
             NavigationBar {
                 tabs.forEachIndexed { i, t ->
                     val badge = when (i) {
-                        0 -> pendingCount
                         1 -> waitingCount
                         3 -> kitchenCount
                         else -> 0

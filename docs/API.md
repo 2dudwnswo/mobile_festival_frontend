@@ -1,4 +1,4 @@
-# 축제 주점 시스템 — 서버 API / WebSocket 명세 (v0.1)
+# 축제 주점 시스템 — 서버 API / WebSocket 명세 (v0.2)
 
 > 관리자 앱(Android)과 웹 3종(웨이팅 등록 / 웨이팅 조회 / 테이블 QR 주문)이 공유하는 서버 명세.
 > 서버는 폰 핫스팟에 연결된 **노트북**에서 실행한다. 인터넷 없음.
@@ -9,6 +9,9 @@
 - 에러 응답: HTTP 4xx + `{ "error": "사람이 읽을 수 있는 한국어 메시지" }`
   - 앱은 `error` 문자열을 그대로 토스트로 띄운다.
 
+> **v0.2 변경 (입금확인 주체 변경)**: 입금확인은 **서버가 판단**한다. 관리자 앱은 입금을 확인하거나 주문을 취소하지 않고,
+> `PAID` 주문만 사용한다. 자세한 내용은 1장 "결제", 4-3 이용 종료, 4-5 주문 참고.
+
 ---
 
 ## 1. 핵심 규칙 (확정 사항)
@@ -17,8 +20,9 @@
 |---|---|
 | 회전 시간 | 기본 100분. **착석 순간** `seatedAt` 기록 → 타이머 시작 |
 | 임박/초과 | 종료 15분 전 임박, 시간 경과 시 초과. **서버는 계산하지 않음** — 앱이 `seatedAt + (rotationMinutes + extendedMinutes)` 로 계산 |
-| 결제 | **주문마다 선결제.** 주문은 `PENDING`으로 생성 → 스태프가 입금확인 → `PAID` |
-| 주방 | `PAID` 된 주문만 주방 화면에 나온다 |
+| 결제 | **주문마다 선결제.** 주문은 `PENDING`으로 생성 → **서버가 입금을 판단해 `PAID`로 바꾼다.** 판단 방식은 서버 담당이 정한다. QR 주문과 직원 주문(`source:"STAFF"`) 모두 같은 흐름 |
+| 관리자 앱이 쓰는 주문 | **`PAID` 주문만.** 스냅샷에 `PENDING`/`CANCELLED` 주문이 들어와도 앱은 무시한다 (서버는 `PAID`만 보내도 되고 전부 보내도 된다). 앱은 입금확인·주문취소 API를 호출하지 않는다 |
+| 주방 | `PAID` 이고 조리 전(`cookStatus:"WAITING"`)인 주문만 주방 화면에 나온다 |
 | 주문 가능 조건 | 테이블이 `OCCUPIED`일 때만. 빈 테이블 QR 주문은 **409 거절** |
 | VIP | 스태프가 앱에서 등록. 목록 최상단. 일반 손님의 "내 앞 대기"에서는 **VIP 제외** |
 | 무응답 | 호출 후 3분 경과 시 앱에 [무응답] 버튼 노출, **스태프가 수동 처리**. 서버 타이머 없음 |
@@ -78,7 +82,7 @@
   "cookStatus": "WAITING",     // "WAITING" | "DONE"
   "createdAt": 1726700000000,
   "addedBy": null,             // STAFF 주문이면 스태프 이름
-  "paidAt": null, "paidBy": null,
+  "paidAt": null, "paidBy": null, // 서버가 PAID로 바꿀 때 채움 (paidBy는 선택)
   "cookedAt": null, "cookedBy": null
 }
 
@@ -88,7 +92,7 @@
   "settings": { ... },
   "tables": [ Table ... ],      // no 오름차순
   "waitings": [ Waiting ... ],  // SEATED/CANCELLED 포함 전부 (앱이 필터링)
-  "orders": [ Order ... ],
+  "orders": [ Order ... ],     // PAID만 보내도 되고 전부 보내도 됨 (앱은 PAID만 사용)
   "menu": [ MenuItem ... ],
   "staff": [ "동현", "영준", "민지" ]   // 1-O 담당자 선택 목록 (서버 설정 파일)
 }
@@ -143,7 +147,7 @@
 |---|---|---|---|
 | POST | `/api/tables/{no}/seat` | `{ staff, waitingId?, partySize? }` | EMPTY → OCCUPIED, `seatedAt=now`, `extendedMinutes=0`. `waitingId`가 있으면 그 웨이팅을 `SEATED`, `tableNo` 기록, phone/partySize 복사. 이미 OCCUPIED면 409 |
 | POST | `/api/tables/{no}/extend` | `{ staff, minutes }` | `extendedMinutes += minutes` (10/20/30) |
-| POST | `/api/tables/{no}/release` | `{ staff }` | OCCUPIED → EMPTY, 필드 초기화. 해당 테이블의 `PENDING` 주문은 `CANCELLED` 처리 |
+| POST | `/api/tables/{no}/release` | `{ staff }` | OCCUPIED → EMPTY, 필드 초기화. 해당 테이블의 입금 전(`PENDING`) 주문을 어떻게 처리할지는 **서버가 결정**한다 (참고: mock 서버는 `CANCELLED` 처리) |
 
 ### 4-4. 웨이팅
 
@@ -175,11 +179,18 @@
 
 | Method | Path | Body | 사용처 | 동작 |
 |---|---|---|---|---|
-| POST | `/api/orders` | `{ tableNo, items:[{menuId, qty}], source, staff? }` | QR 웹(`source:"QR"`) / 앱(`"STAFF"`) | 테이블이 EMPTY면 **409** `"착석 처리된 테이블만 주문할 수 있습니다"`. 품절/없는 메뉴 400. PENDING으로 생성, 응답: `Order` |
+| POST | `/api/orders` | `{ tableNo, items:[{menuId, qty}], source, staff? }` | QR 웹(`source:"QR"`) / 앱(`"STAFF"`) | 테이블이 EMPTY면 **409** `"착석 처리된 테이블만 주문할 수 있습니다"`. 품절/없는 메뉴 400. PENDING으로 생성, 응답: `Order`. 직원 주문(`STAFF`)도 QR 주문과 똑같이 서버의 입금 판단을 거친다 |
 | GET | `/api/orders?tableNo=7` | – | QR 웹 | 해당 테이블의 현재 착석(seatedAt 이후) 주문 목록 → 손님이 입금 상태 확인 |
-| POST | `/api/orders/{id}/confirm-payment` | `{ staff }` | 앱 | PENDING → PAID, paidAt/paidBy. 이때부터 주방에 노출 |
-| POST | `/api/orders/{id}/cancel` | `{ staff }` | 앱 | PENDING → CANCELLED (입금 전 오주문 정리용) |
 | POST | `/api/orders/{id}/cooked` | `{ staff }` | 앱(주방) | cookStatus=DONE. 되돌리기 없음 |
+
+**서버/웹 측 전용** — 관리자 앱은 호출하지 않는다.
+
+| Method | Path | Body | 동작 |
+|---|---|---|---|
+| POST | `/api/orders/{id}/confirm-payment` | 서버 담당이 정함 | PENDING → PAID, paidAt(/paidBy). 이때부터 앱(테이블 상세·주방)에 나타난다. 입금 판단 방식과 이 경로를 외부에 열지 여부는 서버 담당이 정한다 |
+| POST | `/api/orders/{id}/cancel` | 서버 담당이 정함 | PENDING → CANCELLED (입금 전 오주문 정리용) |
+
+- mock 서버는 테스트를 위해 `confirm-payment`를 "서버가 입금을 확인한 상황" 흉내용으로 열어 두고, `/dev` 페이지에 버튼을 둔다.
 
 ---
 

@@ -31,7 +31,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,13 +56,9 @@ import com.festivalpub.admin.data.formatClock
 import com.festivalpub.admin.data.formatPhone
 import com.festivalpub.admin.data.formatRemaining
 import com.festivalpub.admin.data.formatWon
-import com.festivalpub.admin.data.minutesAgo
 import com.festivalpub.admin.data.ordersForTable
-import com.festivalpub.admin.data.pendingOrders
 import com.festivalpub.admin.data.remainingMs
 import com.festivalpub.admin.data.state
-
-private const val STALE_PAYMENT_MS = 5 * 60_000L // 입금대기 5분 넘으면 빨간 배지
 
 // ============================================================
 // 1-1 테이블 현황 대시보드
@@ -71,10 +66,7 @@ private const val STALE_PAYMENT_MS = 5 * 60_000L // 입금대기 5분 넘으면 
 @Composable
 fun TablesScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
     var selectedNo by remember { mutableStateOf<Int?>(null) }
-    var showPending by remember { mutableStateOf(false) }
     val s = snap.settings
-    val pending = snap.pendingOrders()
-    val pendingByTable = pending.groupBy { it.tableNo }
     val states = snap.tables.associate { it.no to it.state(s, now) }
 
     Column(Modifier.fillMaxSize()) {
@@ -92,28 +84,6 @@ fun TablesScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
                 }
             }
         }
-        // 입금 대기 배너 → 탭하면 전체 입금대기 목록
-        if (pending.isNotEmpty()) {
-            val stale = pending.any { now - it.createdAt > STALE_PAYMENT_MS }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (stale) PubColors.PendingStale else PubColors.Pending)
-                    .clickable { showPending = true }
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "입금 대기 ${pending.size}건 · ${formatWon(pending.sumOf { it.total })}",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                )
-                Text("확인하기 ›", color = Color.White)
-            }
-        }
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(s.cols.coerceAtLeast(1)),
@@ -127,7 +97,6 @@ fun TablesScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
                     table = t,
                     state = states[t.no] ?: TableState.EMPTY,
                     remainingMs = t.remainingMs(s, now),
-                    pending = pendingByTable[t.no].orEmpty(),
                     now = now,
                     onClick = { selectedNo = t.no },
                 )
@@ -139,9 +108,6 @@ fun TablesScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
     if (selected != null) {
         TableDetailSheet(vm, snap, selected, now, onDismiss = { selectedNo = null })
     }
-    if (showPending) {
-        PendingPaymentsSheet(vm, snap, now, onDismiss = { showPending = false })
-    }
 }
 
 @Composable
@@ -149,7 +115,6 @@ private fun TableTile(
     table: TableInfo,
     state: TableState,
     remainingMs: Long?,
-    pending: List<Order>,
     now: Long,
     onClick: () -> Unit,
 ) {
@@ -172,17 +137,6 @@ private fun TableTile(
             } else {
                 Text("빈자리", fontSize = 11.sp, color = fg.copy(alpha = 0.6f), maxLines = 1)
             }
-        }
-        if (pending.isNotEmpty()) {
-            val stale = pending.any { now - it.createdAt > STALE_PAYMENT_MS }
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .background(if (stale) PubColors.PendingStale else PubColors.Pending),
-                contentAlignment = Alignment.Center,
-            ) { Text("₩", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
         }
     }
 }
@@ -289,21 +243,15 @@ private fun OccupiedTableContent(vm: AppViewModel, snap: Snapshot, table: TableI
         }
     }
 
-    // 주문 내역 + 합계
+    // 주문 내역 + 합계 (서버가 입금을 확인한 주문만)
     val orders = snap.ordersForTable(table)
-    val paidSum = orders.filter { it.paymentStatus == "PAID" }.sumOf { it.total }
-    val pendingSum = orders.filter { it.paymentStatus == "PENDING" }.sumOf { it.total }
     SectionTitle("주문 내역")
-    Row(Modifier.fillMaxWidth()) {
-        Text("입금완료 ${formatWon(paidSum)}", Modifier.weight(1f), fontWeight = FontWeight.Bold)
-        if (pendingSum > 0) {
-            Text("입금대기 ${formatWon(pendingSum)}", color = PubColors.Pending, fontWeight = FontWeight.Bold)
-        }
-    }
+    Text("주문 합계 ${formatWon(orders.sumOf { it.total })}", fontWeight = FontWeight.Bold)
+    Text("입금이 확인된 주문만 표시됩니다", color = Color.Gray, fontSize = 13.sp)
     Spacer(Modifier.height(8.dp))
     if (orders.isEmpty()) Text("아직 주문이 없습니다", color = Color.Gray)
     orders.forEach { o ->
-        OrderCard(vm, o, now, showTable = false)
+        OrderCard(o)
         Spacer(Modifier.height(8.dp))
     }
 
@@ -317,10 +265,9 @@ private fun OccupiedTableContent(vm: AppViewModel, snap: Snapshot, table: TableI
     ) { Text("이용 종료 (빈자리로)", fontSize = 16.sp) }
 
     if (confirmRelease) {
-        val warn = if (pendingSum > 0) "\n입금 대기 중인 주문 ${formatWon(pendingSum)}은(는) 취소됩니다." else ""
         ConfirmDialog(
             title = "${table.no}번 테이블 이용 종료",
-            text = "테이블을 정리하고 빈자리로 돌립니다.$warn",
+            text = "테이블을 정리하고 빈자리로 돌립니다.",
             confirmLabel = "종료",
             destructive = true,
             onConfirm = { vm.release(table.no); onDismiss() },
@@ -330,30 +277,20 @@ private fun OccupiedTableContent(vm: AppViewModel, snap: Snapshot, table: TableI
 }
 
 // ============================================================
-// 주문 카드 (테이블 상세 / 입금대기 목록 공용)
+// 주문 카드 (테이블 상세). 입금확인된 주문만 들어온다.
 // ============================================================
 @Composable
-fun OrderCard(vm: AppViewModel, order: Order, now: Long, showTable: Boolean) {
-    var confirmCancel by remember { mutableStateOf(false) }
-    val isPending = order.paymentStatus == "PENDING"
-    val stale = isPending && now - order.createdAt > STALE_PAYMENT_MS
-
+private fun OrderCard(order: Order) {
     Card(
-        colors = CardDefaults.cardColors(
-            containerColor = if (isPending) Color(0xFFF3EEFB) else MaterialTheme.colorScheme.surfaceVariant,
-        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                val head = buildString {
-                    if (showTable) append("${order.tableNo}번 테이블 · ")
-                    append("#${order.id} · ${formatClock(order.createdAt)}")
-                    append(if (order.source == "QR") " · QR" else " · 직원(${order.addedBy ?: "-"})")
-                }
-                Text(head, Modifier.weight(1f), fontSize = 13.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (stale) Text("${minutesAgo(now - order.createdAt)}분 경과", color = PubColors.PendingStale, fontSize = 12.sp)
+            val head = buildString {
+                append("#${order.id} · ${formatClock(order.createdAt)}")
+                append(if (order.source == "QR") " · QR" else " · 직원(${order.addedBy ?: "-"})")
             }
+            Text(head, fontSize = 13.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
             order.items.forEach { line ->
                 Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
                     Text("${line.name} × ${line.qty}", Modifier.weight(1f))
@@ -362,55 +299,8 @@ fun OrderCard(vm: AppViewModel, order: Order, now: Long, showTable: Boolean) {
             }
             Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(formatWon(order.total), Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                if (isPending) {
-                    TextButton(onClick = { confirmCancel = true }) { Text("주문취소", color = Color.Gray) }
-                    Button(
-                        onClick = { vm.confirmPayment(order.id) },
-                        colors = ButtonDefaults.buttonColors(containerColor = PubColors.Pending),
-                    ) { Text("입금확인") }
-                } else {
-                    val cook = if (order.cookStatus == "DONE") "조리완료" else "조리중"
-                    Text("입금완료(${order.paidBy ?: "-"}) · $cook", fontSize = 13.sp, color = Color(0xFF2E7D32))
-                }
-            }
-        }
-    }
-
-    if (confirmCancel) {
-        ConfirmDialog(
-            title = "주문 #${order.id} 취소",
-            text = "입금 전 주문을 취소합니다. (${formatWon(order.total)})",
-            confirmLabel = "주문 취소",
-            destructive = true,
-            onConfirm = { vm.cancelOrder(order.id) },
-            onDismiss = { confirmCancel = false },
-        )
-    }
-}
-
-// ============================================================
-// 입금 대기 전체 목록 (대시보드 배너에서)
-// ============================================================
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PendingPaymentsSheet(vm: AppViewModel, snap: Snapshot, now: Long, onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val pending = snap.pendingOrders()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp),
-        ) {
-            Text("입금 대기 ${pending.size}건", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("은행 앱 입금액과 합계를 대조한 뒤 입금확인을 누르세요. 확인된 주문만 주방으로 넘어갑니다.", color = Color.Gray, fontSize = 13.sp)
-            Spacer(Modifier.height(12.dp))
-            if (pending.isEmpty()) Text("입금 대기 중인 주문이 없습니다", color = Color.Gray)
-            pending.forEach { o ->
-                OrderCard(vm, o, now, showTable = true)
-                Spacer(Modifier.height(8.dp))
+                val cook = if (order.cookStatus == "DONE") "조리완료" else "조리중"
+                Text(cook, fontSize = 13.sp, color = Color(0xFF2E7D32))
             }
         }
     }

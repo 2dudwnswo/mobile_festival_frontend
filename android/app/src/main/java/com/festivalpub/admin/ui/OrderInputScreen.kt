@@ -171,7 +171,7 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
                         Text("${menuById[id]?.name ?: "?"} × $qty", fontSize = 16.sp)
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("합계 ${formatWon(total)} · 입금확인 후 주방으로 전달됩니다", color = Color.Gray, fontSize = 13.sp)
+                    Text("합계 ${formatWon(total)} · 입금이 확인되면 주방으로 전달됩니다", color = Color.Gray, fontSize = 13.sp)
                 }
             },
             confirmButton = {
