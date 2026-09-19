@@ -213,7 +213,7 @@ private fun EmptyTableContent(vm: AppViewModel, snap: Snapshot, table: TableInfo
                 Text("$rank · ${formatPhone(w.phone)}", fontWeight = FontWeight.Bold)
                 Text("${w.partySize}명 · ${if (w.status == "CALLED") "호출됨" else "대기"}", fontSize = 13.sp, color = Color.Gray)
             }
-            Button(onClick = { vm.seat(table.no, w.id); onDismiss() }) { Text("착석") }
+            Button(onClick = { vm.seat(table.no, w); onDismiss() }) { Text("착석") }
         }
     }
     Spacer(Modifier.height(12.dp))

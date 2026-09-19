@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.festivalpub.admin.data.AuthState
 import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.activeWaitings
 import com.festivalpub.admin.data.kitchenOrders
@@ -97,7 +98,7 @@ fun App(vm: AppViewModel = viewModel()) {
     val staff by vm.staff.collectAsStateWithLifecycle()
     val snapshot by vm.snapshot.collectAsStateWithLifecycle()
     val conn by vm.conn.collectAsStateWithLifecycle()
-    val serverUrl by vm.serverUrl.collectAsStateWithLifecycle()
+    val authState by vm.authState.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -120,10 +121,10 @@ fun App(vm: AppViewModel = viewModel()) {
 
     val snap = snapshot
     val staffName = staff
-    if (staffName == null || snap == null) {
-        ConnectScreen(vm, conn, snap, serverUrl, snackbar)
+    if (authState != AuthState.SIGNED_IN || staffName == null || snap == null) {
+        ConnectScreen(vm, authState, conn, snap, snackbar)
     } else {
-        MainScaffold(vm, snap, staffName, conn, serverUrl, snackbar)
+        MainScaffold(vm, snap, staffName, conn, snackbar)
     }
 }
 
@@ -143,13 +144,13 @@ private fun MainScaffold(
     snap: Snapshot,
     staff: String,
     conn: Conn,
-    serverUrl: String,
     snackbar: SnackbarHostState,
 ) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showSettings by remember { mutableStateOf(false) }
     val now by vm.now.collectAsStateWithLifecycle()
     val tabRequest by vm.tabRequest.collectAsStateWithLifecycle()
+    val pendingWrites by vm.pendingWrites.collectAsStateWithLifecycle()
 
     // 알림을 눌러 들어오면 해당 탭으로 (설정 화면이 열려 있으면 닫고)
     LaunchedEffect(tabRequest) {
@@ -162,7 +163,7 @@ private fun MainScaffold(
 
     if (showSettings) {
         BackHandler { showSettings = false }
-        SettingsScreen(vm, snap, serverUrl, staff, snackbar, onClose = { showSettings = false })
+        SettingsScreen(vm, snap, staff, snackbar, onClose = { showSettings = false })
         return
     }
 
@@ -217,7 +218,8 @@ private fun MainScaffold(
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (conn != Conn.CONNECTED) {
                 Text(
-                    "서버 연결 끊김 — 자동으로 다시 연결하는 중… (화면 정보가 최신이 아닐 수 있음)",
+                    "인터넷 연결 끊김 — 자동으로 다시 연결하는 중… (화면 정보가 최신이 아닐 수 있음)" +
+                        if (pendingWrites > 0) " · 전송 대기 ${pendingWrites}건" else "",
                     modifier = Modifier.fillMaxWidth().background(Color(0xFFE53935)).padding(8.dp),
                     color = Color.White,
                     fontSize = 13.sp,

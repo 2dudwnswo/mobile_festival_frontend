@@ -1,53 +1,53 @@
 package com.festivalpub.admin
 
 import android.app.Application
-import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.festivalpub.admin.data.ApiClient
-import com.festivalpub.admin.data.ApiException
+import com.festivalpub.admin.data.ActionException
+import com.festivalpub.admin.data.AuthState
+import com.festivalpub.admin.data.FirebaseRepository
 import com.festivalpub.admin.data.Settings
 import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.TableState
-import com.festivalpub.admin.data.WsMessage
+import com.festivalpub.admin.data.Waiting
 import com.festivalpub.admin.data.state
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.addJsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonArray
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 
 enum class Conn { DISCONNECTED, CONNECTING, CONNECTED }
 
-private const val OFFLINE_RETRIES = 30 // 2초 간격 → 약 1분
-
 class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
-    private val prefs = app.getSharedPreferences("pub", Context.MODE_PRIVATE)
     private val alerts = Alerts(app)
+    private val repo = FirebaseRepository(app)
 
-    private val _serverUrl = MutableStateFlow(prefs.getString("serverUrl", "") ?: "")
-    val serverUrl: StateFlow<String> = _serverUrl.asStateFlow()
+    /** 스태프 공용 계정 로그인 상태. 폰마다 한 번 로그인하면 유지된다. */
+    val authState: StateFlow<AuthState> = repo.authState
 
-    private val _conn = MutableStateFlow(Conn.DISCONNECTED)
-    val conn: StateFlow<Conn> = _conn.asStateFlow()
+    /** Firebase 리스너 결과를 합친 전체 상태. 화면은 언제나 이 값에서 그린다. */
+    val snapshot: StateFlow<Snapshot?> = repo.snapshot
 
-    private val _snapshot = MutableStateFlow<Snapshot?>(null)
-    val snapshot: StateFlow<Snapshot?> = _snapshot.asStateFlow()
+    /** 연결 상태: 인터넷이 없으면 끊김, 서버와 아직 동기화 전이면 연결 중 */
+    val conn: StateFlow<Conn> = combine(repo.network, repo.synced) { net, synced ->
+        when {
+            !net -> Conn.DISCONNECTED
+            !synced -> Conn.CONNECTING
+            else -> Conn.CONNECTED
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, Conn.CONNECTING)
+
+    /** 끊긴 동안 쌓여 아직 서버로 가지 않은 쓰기 수 (연결되면 자동 전송) */
+    val pendingWrites: StateFlow<Int> = repo.pendingWrites
 
     /** 1-O 담당자. 앱을 새로 실행할 때마다 다시 선택한다. */
     private val _staff = MutableStateFlow<String?>(null)
@@ -64,10 +64,6 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
-    @Volatile private var clockOffset = 0L
-    private var api: ApiClient? = null
-    private var socketJob: Job? = null
-
     // 알림 상태 (init 보다 먼저 초기화되어야 함)
     private var knownOvertime = emptySet<Int>()
     private var knownImminent = emptySet<Int>()
@@ -75,76 +71,39 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     init {
         Notifications.createChannels(app)
-        if (_serverUrl.value.isNotBlank()) connect(_serverUrl.value)
         viewModelScope.launch {
             while (isActive) {
-                val t = System.currentTimeMillis() + clockOffset
+                val t = System.currentTimeMillis() + repo.clockOffset
                 _now.value = t
                 checkAlerts(t)
                 delay(1000 - (System.currentTimeMillis() % 1000))
             }
         }
+        viewModelScope.launch { repo.errors.collect { _messages.tryEmit(it) } }
+        // 계정 로그아웃(또는 다른 기기에서 비밀번호 변경 등으로 로그인이 풀림) → 담당자·서비스도 정리
+        viewModelScope.launch {
+            repo.authState.collect { if (it == AuthState.SIGNED_OUT && _staff.value != null) logoutStaff() }
+        }
     }
 
-    // ---------------- 연결 ----------------
+    // ---------------- 계정 · 담당자 ----------------
 
-    fun connect(rawUrl: String) {
-        if (rawUrl.isBlank()) return
-        val client = ApiClient(rawUrl)
-        _serverUrl.value = client.baseUrl
-        prefs.edit().putString("serverUrl", client.baseUrl).apply()
-
-        socketJob?.cancel()
-        api?.shutdown()
-        api = client
-        _snapshot.value = null
-
-        socketJob = viewModelScope.launch {
-            var backoff = 1000L
-            while (isActive) {
-                _conn.value = Conn.CONNECTING
-                val closed = CompletableDeferred<Unit>()
-                var opened = false
-                val ws = client.openSocket(object : WebSocketListener() {
-                    override fun onOpen(webSocket: WebSocket, response: Response) {
-                        opened = true
-                        _conn.value = Conn.CONNECTED
-                    }
-
-                    override fun onMessage(webSocket: WebSocket, text: String) {
-                        val msg = runCatching { ApiClient.json.decodeFromString(WsMessage.serializer(), text) }.getOrNull()
-                        val data = msg?.data
-                        if (msg?.type == "snapshot" && data != null) applySnapshot(data)
-                    }
-
-                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                        webSocket.close(1000, null)
-                    }
-
-                    override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                        closed.complete(Unit)
-                    }
-
-                    override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        closed.complete(Unit)
-                    }
-                })
-                try {
-                    closed.await()
-                } finally {
-                    ws.cancel()
-                }
-                _conn.value = Conn.DISCONNECTED
-                if (opened) backoff = 1000L
-                delay(backoff) // 서버 재시작/핫스팟 순단 시 자동 재연결
-                backoff = (backoff * 2).coerceAtMost(5000L)
+    fun signIn(password: String, onDone: () -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                repo.signIn(password)
+            } catch (e: ActionException) {
+                _messages.tryEmit(e.message ?: "로그인 실패")
+            } finally {
+                onDone()
             }
         }
     }
 
-    private fun applySnapshot(s: Snapshot) {
-        if (s.serverTime > 0) clockOffset = s.serverTime - System.currentTimeMillis()
-        _snapshot.value = s
+    /** 설정 화면의 [로그아웃]: 공용 계정에서 로그아웃. 다시 쓰려면 비밀번호를 입력해야 한다. */
+    fun signOut() {
+        logoutStaff()
+        repo.signOut()
     }
 
     fun selectStaff(name: String) {
@@ -176,7 +135,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     // ---------------- 알림 ----------------
 
     private fun checkAlerts(now: Long) {
-        val s = _snapshot.value ?: return
+        val s = snapshot.value ?: return
         if (_staff.value == null) return
         val over = s.tables.filter { it.state(s.settings, now) == TableState.OVERTIME }.map { it.no }.toSet()
         val imminent = s.tables.filter { it.state(s.settings, now) == TableState.IMMINENT }.map { it.no }.toSet()
@@ -196,112 +155,60 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         knownImminent = imminent
     }
 
-    // ---------------- 서버 요청 ----------------
+    // ---------------- Firebase 쓰기 ----------------
 
-    private fun request(
-        path: String,
-        method: String = "POST",
-        extra: JsonObject? = null,
-        onOk: () -> Unit = {},
-        // 두 번 보내도 결과가 같은 요청만 true. 서버에 닿지 못하면 잠시 재시도한다.
-        retryWhileOffline: Boolean = false,
-    ) {
-        val client = api ?: run { _messages.tryEmit("서버에 연결되지 않았습니다"); return }
-        val body = buildJsonObject {
-            put("staff", _staff.value ?: "")
-            extra?.forEach { (k, v) -> put(k, v) }
-        }
+    /** 모든 쓰기에 담당자 이름을 남긴다. 실패하면 한국어 메시지를 스낵바로. */
+    private fun write(onOk: () -> Unit = {}, block: suspend (staff: String) -> Unit) {
+        val staff = _staff.value ?: run { _messages.tryEmit("담당자를 먼저 선택하세요"); return }
         viewModelScope.launch {
-            var attempt = 0
-            while (true) {
-                try {
-                    client.send(method, path, body)
-                    onOk()
-                    return@launch
-                } catch (e: ApiException) {
-                    if (retryWhileOffline && e.offline && ++attempt < OFFLINE_RETRIES) {
-                        delay(2000)
-                        continue
-                    }
-                    _messages.tryEmit(e.message ?: "요청 실패")
-                    return@launch
-                }
+            try {
+                block(staff)
+                onOk()
+            } catch (e: ActionException) {
+                _messages.tryEmit(e.message ?: "저장하지 못했습니다")
             }
         }
     }
 
     // 테이블
-    fun seat(tableNo: Int, waitingId: Int?) = request(
-        "/api/tables/$tableNo/seat",
-        extra = buildJsonObject { if (waitingId != null) put("waitingId", waitingId) },
-    )
+    fun seat(tableNo: Int, waiting: Waiting?) = write { repo.seat(it, tableNo, waiting) }
 
-    fun extend(tableNo: Int, minutes: Int) = request(
-        "/api/tables/$tableNo/extend",
-        extra = buildJsonObject { put("minutes", minutes) },
-    )
+    fun extend(tableNo: Int, minutes: Int) = write { repo.extend(it, tableNo, minutes) }
 
-    fun release(tableNo: Int) = request("/api/tables/$tableNo/release")
+    /** 지금 화면(스냅샷)에 보이는 착석 시각과 같을 때만 종료 → 늦게 갱신된 화면에서 새 손님 테이블을 비우는 사고 방지 */
+    fun release(tableNo: Int) {
+        val seatedAt = snapshot.value?.tables?.find { it.no == tableNo }?.seatedAt
+        write { repo.release(it, tableNo, seatedAt) }
+    }
 
-    // 웨이팅
-    fun addVip(phone: String, partySize: Int, onOk: () -> Unit) = request(
-        "/api/waitings",
-        extra = buildJsonObject {
-            put("phone", phone.filter { it.isDigit() })
-            put("partySize", partySize)
-            put("isVip", true)
-        },
-        onOk = onOk,
-    )
+    // 웨이팅 (일반은 waitings, VIP 는 vipWaitings — Waiting.isVip 로 구분)
+    fun addVip(phone: String, partySize: Int, onOk: () -> Unit) =
+        write(onOk) { repo.addVip(it, phone.filter { c -> c.isDigit() }, partySize) }
 
-    // 탭 즉시 전화가 걸리므로, 서버가 잠깐 끊겨 있어도 호출 기록이 남도록 재시도한다.
-    // (전화 앱이 앞에 떠 있는 동안에는 오류 안내를 볼 수 없어서 [무응답] 버튼이 영영 안 나오게 됨)
-    fun callWaiting(id: Int) = request("/api/waitings/$id/call", retryWhileOffline = true)
-    fun noShow(id: Int) = request("/api/waitings/$id/no-show")
-    fun restoreWaiting(id: Int) = request("/api/waitings/$id/restore")
-    fun cancelWaiting(id: Int) = request("/api/waitings/$id/cancel")
+    // 호출 기록은 Firestore 오프라인 쓰기 큐를 탄다: LTE 가 끊겨 있어도 화면에 바로 "호출됨"이 되고,
+    // 연결되면 자동으로 전송된다. (예전 LAN 방식의 재시도 로직 대체)
+    fun callWaiting(w: Waiting) = write { repo.setWaitingStatus(it, w, "CALLED") }
+    fun noShow(w: Waiting) = write { repo.setWaitingStatus(it, w, "NO_SHOW") }
+    fun restoreWaiting(w: Waiting) = write { repo.setWaitingStatus(it, w, "WAITING") }
+    fun cancelWaiting(w: Waiting) = write { repo.setWaitingStatus(it, w, "CANCELLED") }
 
-    // 주문
-    fun createOrder(tableNo: Int, cart: Map<Int, Int>, onOk: () -> Unit) = request(
-        "/api/orders",
-        extra = buildJsonObject {
-            put("tableNo", tableNo)
-            put("source", "STAFF")
-            putJsonArray("items") {
-                cart.filterValues { it > 0 }.forEach { (menuId, qty) ->
-                    addJsonObject {
-                        put("menuId", menuId)
-                        put("qty", qty)
-                    }
-                }
-            }
-        },
-        onOk = onOk,
-    )
+    // 주문 (입금확인·주문취소는 서버가 한다. 앱은 직원 주문 생성과 조리완료만)
+    fun createOrder(tableNo: Int, cart: Map<Int, Int>, onOk: () -> Unit) =
+        write(onOk) { repo.createOrder(it, tableNo, cart) }
 
-    // 입금확인·주문취소는 서버가 한다 (API.md v0.2). 앱은 조리완료만 보낸다.
-    fun cooked(orderId: Int) = request("/api/orders/$orderId/cooked")
+    fun cooked(orderId: Int) = write { repo.cooked(it, orderId) }
 
     /** 주방 탭에 새 주문(서버가 PAID 로 바꾼 주문)이 들어왔을 때 짧은 알림음 */
     fun newOrderChime() = alerts.newOrder()
 
-    // 설정 (시간 값만. 테이블 배치 rows/cols 는 웹서버가 관리하므로 보내지 않는다)
-    fun saveSettings(s: Settings) = request(
-        "/api/settings",
-        method = "PUT",
-        extra = buildJsonObject {
-            put("rotationMinutes", s.rotationMinutes)
-            put("imminentMinutes", s.imminentMinutes)
-            put("noShowMinutes", s.noShowMinutes)
-        },
-        onOk = { _messages.tryEmit("설정을 저장했습니다") },
-    )
+    // 설정 (시간 값만. 테이블 배치 rows/cols 는 서버 쪽이 관리하므로 보내지 않는다)
+    fun saveSettings(s: Settings) =
+        write(onOk = { _messages.tryEmit("설정을 저장했습니다") }) { repo.saveTimeSettings(it, s) }
 
     override fun onCleared() {
         // 앱을 완전히 종료(액티비티 finish)하면 서비스도 멈춘다
         stopBackground()
-        socketJob?.cancel()
-        api?.shutdown()
+        repo.close()
         alerts.release()
     }
 }

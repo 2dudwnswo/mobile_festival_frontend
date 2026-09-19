@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -22,8 +21,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -40,19 +39,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.festivalpub.admin.AppViewModel
 import com.festivalpub.admin.data.Snapshot
 
-/** 1-S 설정: 테이블 배치 보기(읽기 전용), 회전/임박/무응답 시간, 서버 주소, 담당자 변경 */
+/** 1-S 설정: 테이블 배치 보기(읽기 전용), 회전/임박/무응답 시간, 담당자 변경, 계정 로그아웃 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     vm: AppViewModel,
     snap: Snapshot,
-    serverUrl: String,
     staff: String,
     snackbar: SnackbarHostState,
     onClose: () -> Unit,
@@ -61,7 +58,7 @@ fun SettingsScreen(
     var rotation by remember(current) { mutableIntStateOf(current.rotationMinutes) }
     var imminent by remember(current) { mutableIntStateOf(current.imminentMinutes) }
     var noShow by remember(current) { mutableIntStateOf(current.noShowMinutes) }
-    var url by remember(serverUrl) { mutableStateOf(serverUrl.removePrefix("http://")) }
+    var confirmSignOut by remember { mutableStateOf(false) }
 
     // 테이블 배치(rows/cols)는 웹서버가 관리한다. 앱은 시간 값만 수정한다.
     val edited = current.copy(rotationMinutes = rotation, imminentMinutes = imminent, noShowMinutes = noShow)
@@ -115,24 +112,35 @@ fun SettingsScreen(
             Spacer(Modifier.height(24.dp))
             HorizontalDivider()
 
-            SectionTitle("서버")
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it },
-                label = { Text("서버 주소") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { vm.connect(url) }, modifier = Modifier.fillMaxWidth()) { Text("다시 연결") }
-
             SectionTitle("담당자")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("현재: $staff", Modifier.weight(1f), fontWeight = FontWeight.Bold)
                 OutlinedButton(onClick = { vm.logoutStaff(); onClose() }) { Text("담당자 변경") }
             }
+
+            SectionTitle("스태프 계정")
+            Text(
+                "이 폰은 스태프 공용 계정으로 로그인되어 있습니다. 로그아웃하면 비밀번호를 다시 입력해야 합니다.",
+                color = Color.Gray,
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { confirmSignOut = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("로그아웃", color = MaterialTheme.colorScheme.error)
+            }
         }
+    }
+
+    // 로그아웃은 비밀번호를 아는 사람만 되돌릴 수 있으므로 확인창을 띄운다
+    if (confirmSignOut) {
+        ConfirmDialog(
+            title = "로그아웃",
+            text = "이 폰에서 스태프 계정을 로그아웃합니다. 다시 쓰려면 공용 비밀번호를 입력해야 합니다.",
+            confirmLabel = "로그아웃",
+            destructive = true,
+            onConfirm = { vm.signOut(); onClose() },
+            onDismiss = { confirmSignOut = false },
+        )
     }
 }
 

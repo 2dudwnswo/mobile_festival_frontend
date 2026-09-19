@@ -84,7 +84,7 @@ fun WaitingScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
     val active = snap.activeWaitings()
     val noShows = snap.noShowWaitings()
     val noShowMs = snap.settings.noShowMinutes * 60_000L
-    var detailId by remember { mutableStateOf<Int?>(null) }
+    var detailId by remember { mutableStateOf<String?>(null) }
     var showVip by remember { mutableStateOf(false) }
 
     // 순위 라벨: VIP는 "VIP", 일반은 1,2,3…
@@ -107,7 +107,7 @@ fun WaitingScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
             if (active.isEmpty()) {
                 item { Text("대기 중인 팀이 없습니다", color = Color.Gray, modifier = Modifier.padding(vertical = 24.dp)) }
             }
-            itemsIndexed(active, key = { _, w -> "a${w.id}" }) { i, w ->
+            itemsIndexed(active, key = { _, w -> "a${w.key}" }) { i, w ->
                 WaitingCard(
                     waiting = w,
                     rank = ranks[i],
@@ -117,14 +117,14 @@ fun WaitingScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
                     noShowMs = noShowMs,
                     onClick = {
                         if (i == 0) {
-                            vm.callWaiting(w.id)
+                            vm.callWaiting(w)
                             dialPhone(context, w.phone)
                         } else {
-                            detailId = w.id
+                            detailId = w.key
                         }
                     },
-                    onMore = { detailId = w.id },
-                    onNoShow = { vm.noShow(w.id) },
+                    onMore = { detailId = w.key },
+                    onNoShow = { vm.noShow(w) },
                 )
             }
             if (noShows.isNotEmpty()) {
@@ -136,7 +136,7 @@ fun WaitingScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
                         modifier = Modifier.padding(top = 16.dp),
                     )
                 }
-                items(noShows, key = { "n${it.id}" }) { w ->
+                items(noShows, key = { "n${it.key}" }) { w ->
                     WaitingCard(
                         waiting = w,
                         rank = if (w.isVip) "VIP" else "-",
@@ -144,8 +144,8 @@ fun WaitingScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
                         dimmed = true,
                         now = now,
                         noShowMs = noShowMs,
-                        onClick = { detailId = w.id },
-                        onMore = { detailId = w.id },
+                        onClick = { detailId = w.key },
+                        onMore = { detailId = w.key },
                         onNoShow = {},
                     )
                 }
@@ -160,7 +160,7 @@ fun WaitingScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
         )
     }
 
-    val detail = detailId?.let { id -> snap.waitings.find { it.id == id } }
+    val detail = detailId?.let { id -> snap.waitings.find { it.key == id } }
     if (detail != null) {
         WaitingDetailSheet(vm, snap, detail, now, onDismiss = { detailId = null })
     }
@@ -275,12 +275,12 @@ private fun WaitingDetailSheet(vm: AppViewModel, snap: Snapshot, w: Waiting, now
                 "SEATED" -> "착석 (${w.tableNo}번)"
                 else -> "취소됨"
             }
-            Text("${w.partySize}명 · 대기번호 ${w.id} · ${formatClock(w.createdAt)} 등록 · $statusLabel", color = Color.Gray)
+            Text("${w.partySize}명 · 대기번호 ${w.label} · ${formatClock(w.createdAt)} 등록 · $statusLabel", color = Color.Gray)
 
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
-                    if (active) vm.callWaiting(w.id)
+                    if (active) vm.callWaiting(w)
                     dialPhone(context, w.phone)
                 },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -300,7 +300,7 @@ private fun WaitingDetailSheet(vm: AppViewModel, snap: Snapshot, w: Waiting, now
                 ) {
                     emptyTables.forEach { t ->
                         FilledTonalButton(
-                            onClick = { vm.seat(t.no, w.id); onDismiss() },
+                            onClick = { vm.seat(t.no, w); onDismiss() },
                             modifier = Modifier.size(width = 64.dp, height = 52.dp),
                             contentPadding = PaddingValues(0.dp),
                         ) { Text("${t.no}", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
@@ -310,12 +310,12 @@ private fun WaitingDetailSheet(vm: AppViewModel, snap: Snapshot, w: Waiting, now
 
             Spacer(Modifier.height(20.dp))
             if (active) {
-                OutlinedButton(onClick = { vm.noShow(w.id); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { vm.noShow(w); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
                     Text("무응답 처리 (다음 팀으로 넘기기)")
                 }
             }
             if (w.status == "NO_SHOW") {
-                Button(onClick = { vm.restoreWaiting(w.id); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { vm.restoreWaiting(w); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
                     Text("대기 복귀 (원래 순서로)")
                 }
             }
@@ -331,7 +331,7 @@ private fun WaitingDetailSheet(vm: AppViewModel, snap: Snapshot, w: Waiting, now
             text = "${formatPhone(w.phone)} (${w.partySize}명) 웨이팅을 취소합니다.",
             confirmLabel = "웨이팅 취소",
             destructive = true,
-            onConfirm = { vm.cancelWaiting(w.id); onDismiss() },
+            onConfirm = { vm.cancelWaiting(w); onDismiss() },
             onDismiss = { confirmCancel = false },
         )
     }

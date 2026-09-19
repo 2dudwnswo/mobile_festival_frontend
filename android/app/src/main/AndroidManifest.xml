@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Firebase (모바일 데이터/핫스팟으로 인터넷 연결) -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 인터넷 끊김을 즉시 감지해 "연결 끊김" 배너를 띄움 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 웨이팅 팀 탭 한 번으로 바로 전화 연결 -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- 시간 초과 테이블 진동 알림 -->
@@ -14,13 +17,11 @@
 
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
-    <!-- 핫스팟 LAN의 노트북 서버와 http(평문)로 통신 -->
     <application
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.FestivalPub"
-        android:usesCleartextTraffic="true">
+        android:theme="@style/Theme.FestivalPub">
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -1,10 +1,8 @@
 package com.festivalpub.admin.data
 
-import kotlinx.serialization.Serializable
+// docs/FIREBASE.md 의 데이터 구조와 대응. Firestore 문서 ↔ 모델 변환은 FirestoreMapper.kt 에 모여 있다.
+// 시각은 모두 epoch ms(Long). Firestore 에는 Timestamp(serverTimestamp)로 저장된다.
 
-// docs/API.md 의 데이터 모델과 1:1 대응
-
-@Serializable
 data class Settings(
     val rows: Int = 5,
     val cols: Int = 6,
@@ -13,7 +11,6 @@ data class Settings(
     val noShowMinutes: Int = 3,
 )
 
-@Serializable
 data class TableInfo(
     val no: Int,
     val status: String = "EMPTY",          // EMPTY | OCCUPIED
@@ -22,23 +19,32 @@ data class TableInfo(
     val partySize: Int? = null,
     val phone: String? = null,
     val waitingId: Int? = null,
+    val waitingIsVip: Boolean = false,      // waitingId 가 vipWaitings 번호인지
 ) {
     val occupied: Boolean get() = status == "OCCUPIED"
 }
 
-@Serializable
+/**
+ * 웨이팅 한 팀. 일반 손님은 `waitings`(친구 서버가 생성), VIP 는 `vipWaitings`(앱만 생성)에 있다.
+ * 두 컬렉션은 번호를 따로 매기므로 id 가 겹칠 수 있다 → 화면에서 구분할 때는 [key] 를 쓴다.
+ */
 data class Waiting(
     val id: Int,
     val phone: String,
     val partySize: Int,
-    val isVip: Boolean = false,
+    val isVip: Boolean = false,             // true = vipWaitings 문서
     val status: String = "WAITING",        // WAITING | CALLED | NO_SHOW | SEATED | CANCELLED
     val createdAt: Long = 0,
     val calledAt: Long? = null,
     val tableNo: Int? = null,
-)
+) {
+    /** 두 컬렉션을 합친 목록에서 겹치지 않는 식별자 */
+    val key: String get() = if (isVip) "v$id" else "w$id"
 
-@Serializable
+    /** 화면에 보이는 대기번호: 일반 "12", VIP "V3" */
+    val label: String get() = if (isVip) "V$id" else "$id"
+}
+
 data class MenuItem(
     val id: Int,
     val name: String,
@@ -47,7 +53,6 @@ data class MenuItem(
     val soldOut: Boolean = false,
 )
 
-@Serializable
 data class OrderLine(
     val menuId: Int,
     val name: String,
@@ -55,7 +60,6 @@ data class OrderLine(
     val qty: Int,
 )
 
-@Serializable
 data class Order(
     val id: Int,
     val tableNo: Int,
@@ -72,19 +76,12 @@ data class Order(
     val cookedBy: String? = null,
 )
 
-@Serializable
+/** 화면이 그리는 전체 상태. Firebase 리스너 결과를 FirebaseRepository 가 합쳐 만든다. */
 data class Snapshot(
-    val serverTime: Long = 0,
     val settings: Settings = Settings(),
     val tables: List<TableInfo> = emptyList(),
-    val waitings: List<Waiting> = emptyList(),
-    val orders: List<Order> = emptyList(),
+    val waitings: List<Waiting> = emptyList(),   // 일반 + VIP 합친 목록
+    val orders: List<Order> = emptyList(),       // 오늘의 PAID 주문만
     val menu: List<MenuItem> = emptyList(),
     val staff: List<String> = emptyList(),
-)
-
-@Serializable
-data class WsMessage(
-    val type: String,
-    val data: Snapshot? = null,
 )
