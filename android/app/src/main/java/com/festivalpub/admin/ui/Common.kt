@@ -59,9 +59,9 @@ fun Stepper(
     value: Int,
     onChange: (Int) -> Unit,
     range: IntRange,
+    modifier: Modifier = Modifier,
     step: Int = 1,
     suffix: String = "",
-    modifier: Modifier = Modifier,
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
