@@ -35,7 +35,7 @@ enum class Conn { DISCONNECTED, CONNECTING, CONNECTED }
 
 private const val OFFLINE_RETRIES = 30 // 2초 간격 → 약 1분
 
-class AppViewModel(app: Application) : AndroidViewModel(app) {
+class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val prefs = app.getSharedPreferences("pub", Context.MODE_PRIVATE)
     private val alerts = Alerts(app)
@@ -57,6 +57,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _now = MutableStateFlow(System.currentTimeMillis())
     val now: StateFlow<Long> = _now.asStateFlow()
 
+    /** 알림을 눌러 열었을 때 이동할 하단 탭. 화면이 소비하면 null 로 되돌린다. */
+    private val _tabRequest = MutableStateFlow<Int?>(null)
+    val tabRequest: StateFlow<Int?> = _tabRequest.asStateFlow()
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
@@ -70,6 +74,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var lastOvertimeAlert = 0L
 
     init {
+        Notifications.createChannels(app)
         if (_serverUrl.value.isNotBlank()) connect(_serverUrl.value)
         viewModelScope.launch {
             while (isActive) {
@@ -144,10 +149,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectStaff(name: String) {
         _staff.value = name.trim().ifBlank { null }
+        // 담당자를 고르면 백그라운드에서도 알림이 끊기지 않도록 포그라운드 서비스 시작
+        if (_staff.value != null) KeepAliveService.start(app)
     }
 
     fun logoutStaff() {
         _staff.value = null
+        stopBackground()
+    }
+
+    fun requestTab(tab: Int) {
+        _tabRequest.value = tab
+    }
+
+    fun consumeTabRequest() {
+        _tabRequest.value = null
+    }
+
+    private fun stopBackground() {
+        KeepAliveService.stop(app)
+        Notifications.cancelOvertime(app)
+        knownOvertime = emptySet()
+        knownImminent = emptySet()
     }
 
     // ---------------- 알림 ----------------
@@ -164,6 +187,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // 초과 테이블이 정리되지 않고 남아 있으면 1분마다 반복
             over.isNotEmpty() && real - lastOvertimeAlert >= 60_000 -> { alerts.overtime(); lastOvertimeAlert = real }
             (imminent - knownImminent).isNotEmpty() -> alerts.imminent()
+        }
+        // 상태바 알림: 초과 테이블 목록이 바뀔 때만 갱신 (새로 초과된 테이블이 있으면 헤드업)
+        if (over != knownOvertime) {
+            Notifications.overtime(app, over.sorted(), newlyOver = (over - knownOvertime).isNotEmpty())
         }
         knownOvertime = over
         knownImminent = imminent
@@ -271,6 +298,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     override fun onCleared() {
+        // 앱을 완전히 종료(액티비티 finish)하면 서비스도 멈춘다
+        stopBackground()
         socketJob?.cancel()
         api?.shutdown()
         alerts.release()

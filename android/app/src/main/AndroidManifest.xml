@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- 시간 초과 테이블 진동 알림 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- "N번 테이블 시간 초과" 알림 + 실행 중 상시 알림 (Android 13+ 런타임 권한) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 백그라운드에서 앱이 얼지 않게 하는 포그라운드 서비스 (Android 14+ 는 타입별 권한 필요) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
@@ -25,5 +30,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- specialUse: 스토어 배포 없이 APK 로 설치하는 행사용 앱. dataSync 는 Android 15 에서 6시간 제한이 있어 쓰지 않는다 -->
+        <service
+            android:name=".KeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="true">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="축제 주점 스태프용: 앱이 백그라운드일 때도 테이블 이용 시간 초과를 진동·소리·알림으로 알린다" />
+        </service>
     </application>
 </manifest>

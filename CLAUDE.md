@@ -67,7 +67,9 @@
 android/app/src/main/java/com/festivalpub/admin/
 ├─ MainActivity.kt       App(): 접속/담당자 화면 ↔ 메인 스캐폴드(하단 탭 4개, 설정 진입)
 ├─ AppViewModel.kt       연결·재연결, 스냅샷 보관, 1초 ticker(now), 알림 판단, 모든 서버 요청
-├─ Alerts.kt             진동/소리
+├─ Alerts.kt             진동/소리 (알람 용도), 주방 새 주문 알림음
+├─ KeepAliveService.kt   포그라운드 서비스: "실행 중" 상시 알림만. 백그라운드에서 앱이 얼지 않게 함 (로직 없음)
+├─ Notifications.kt      알림 채널, "N번 테이블 시간 초과" 알림(누르면 테이블 탭)
 ├─ Phone.kt              dialPhone()
 ├─ data/Models.kt        API.md 모델과 1:1 대응 (@Serializable)
 ├─ data/Logic.kt         테이블 상태 계산, 웨이팅 정렬, 주문 필터, 포맷 함수
@@ -87,6 +89,8 @@ android/app/src/main/java/com/festivalpub/admin/
 - 서버는 WebSocket `/ws`로 **전체 스냅샷** `{type:"snapshot", data}`를 보낸다. 연결 직후 한 번, 그리고 상태가 바뀔 때마다 보낸다.
 - 앱은 상태를 바꿀 때 REST로 요청만 보내고, **응답으로 로컬 상태를 고치지 않는다.** 화면은 언제나 스냅샷에서 그린다. 이 원칙을 깨지 않는다.
 - 연결이 끊기면 1초에서 5초까지 백오프하며 자동으로 다시 연결하고, 재연결하면 스냅샷으로 복구된다.
+- 담당자를 선택하면 `KeepAliveService`(포그라운드 서비스, specialUse)가 시작된다. 은행 앱·통화 중에도 ViewModel 의
+  타이머와 알림이 계속 돈다. WebSocket·타이머를 서비스로 옮기지 않는다. 담당자 변경·앱 종료·최근 앱에서 스와이프하면 멈춘다.
 - 기기마다 시계가 다를 수 있으므로 모든 시간 계산은 `vm.now`를 쓴다. 이 값은 `serverTime`으로 보정한 현재 시각이다.
 
 ## 5. 개발·검증 방법

@@ -2,10 +2,13 @@ package com.festivalpub.admin
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.viewModels
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,11 +69,26 @@ import com.festivalpub.admin.ui.TablesScreen
 import com.festivalpub.admin.ui.WaitingScreen
 
 class MainActivity : ComponentActivity() {
+    // Compose 의 viewModel() 과 같은 인스턴스 (같은 액티비티 · 같은 기본 키)
+    private val vm: AppViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 행사 중 화면이 꺼지지 않게
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        setContent { AppTheme { App() } }
+        if (savedInstanceState == null) handleTabExtra(intent)
+        setContent { AppTheme { App(vm) } }
+    }
+
+    // "N번 테이블 시간 초과" 알림을 누르면 이미 떠 있는 화면으로 들어온다 (SINGLE_TOP)
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleTabExtra(intent)
+    }
+
+    private fun handleTabExtra(intent: Intent?) {
+        val tab = intent?.getIntExtra(Notifications.EXTRA_TAB, -1) ?: -1
+        if (tab >= 0) vm.requestTab(tab)
     }
 }
 
@@ -85,12 +103,19 @@ fun App(vm: AppViewModel = viewModel()) {
 
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
-    // 전화 권한: 허용하면 웨이팅 탭 한 번에 바로 발신
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    // 첫 실행 때 한 번에 요청:
+    //  - 전화: 허용하면 웨이팅 탭 한 번에 바로 발신
+    //  - 알림(Android 13+): "N번 테이블 시간 초과" 알림과 실행 중 상시 알림
+    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {}
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
-            permLauncher.launch(Manifest.permission.CALL_PHONE)
+        val wanted = buildList {
+            add(Manifest.permission.CALL_PHONE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
         }
+        val missing = wanted.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) permLauncher.launch(missing.toTypedArray())
     }
 
     val snap = snapshot
@@ -124,6 +149,16 @@ private fun MainScaffold(
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var showSettings by remember { mutableStateOf(false) }
     val now by vm.now.collectAsStateWithLifecycle()
+    val tabRequest by vm.tabRequest.collectAsStateWithLifecycle()
+
+    // 알림을 눌러 들어오면 해당 탭으로 (설정 화면이 열려 있으면 닫고)
+    LaunchedEffect(tabRequest) {
+        tabRequest?.let {
+            tab = it
+            showSettings = false
+            vm.consumeTabRequest()
+        }
+    }
 
     if (showSettings) {
         BackHandler { showSettings = false }
