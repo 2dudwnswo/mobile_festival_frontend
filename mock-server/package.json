@@ -1,0 +1,9 @@
+{
+  "name": "festival-pub-mock-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "축제 주점 테스트용 mock 서버",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}

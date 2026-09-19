@@ -1,0 +1,168 @@
+package com.festivalpub.admin.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.festivalpub.admin.AppViewModel
+import com.festivalpub.admin.data.Snapshot
+
+/** 1-S 설정: 테이블 배치 보기(읽기 전용), 회전/임박/무응답 시간, 서버 주소, 담당자 변경 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(
+    vm: AppViewModel,
+    snap: Snapshot,
+    serverUrl: String,
+    staff: String,
+    snackbar: SnackbarHostState,
+    onClose: () -> Unit,
+) {
+    val current = snap.settings
+    var rotation by remember(current) { mutableIntStateOf(current.rotationMinutes) }
+    var imminent by remember(current) { mutableIntStateOf(current.imminentMinutes) }
+    var noShow by remember(current) { mutableIntStateOf(current.noShowMinutes) }
+    var url by remember(serverUrl) { mutableStateOf(serverUrl.removePrefix("http://")) }
+
+    // 테이블 배치(rows/cols)는 웹서버가 관리한다. 앱은 시간 값만 수정한다.
+    val edited = current.copy(rotationMinutes = rotation, imminentMinutes = imminent, noShowMinutes = noShow)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("설정") },
+                navigationIcon = {
+                    IconButton(onClick = onClose) { Icon(Icons.Filled.ArrowBack, contentDescription = "뒤로") }
+                },
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp),
+        ) {
+            SectionTitle("테이블 배치 (웹서버에서 관리)")
+            Text(
+                "가로 ${current.cols} × 세로 ${current.rows} · 총 ${snap.tables.size}개",
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "배치는 웹서버에서 바꾸면 이 앱에 자동으로 반영됩니다.",
+                color = Color.Gray,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+            )
+            LayoutPreview(current.rows, current.cols)
+
+            SectionTitle("시간")
+            Stepper("회전 시간", rotation, { rotation = it }, 30..240, step = 5, suffix = "분")
+            Spacer(Modifier.height(8.dp))
+            Stepper("임박 표시 (종료 전)", imminent, { imminent = it }, 5..60, step = 5, suffix = "분")
+            Spacer(Modifier.height(8.dp))
+            Stepper("무응답 버튼 (호출 후)", noShow, { noShow = it }, 1..10, suffix = "분")
+
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = { vm.saveSettings(edited) },
+                enabled = edited != current,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text("저장 (모든 기기에 적용)", fontSize = 16.sp) }
+
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+
+            SectionTitle("서버")
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("서버 주소") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { vm.connect(url) }, modifier = Modifier.fillMaxWidth()) { Text("다시 연결") }
+
+            SectionTitle("담당자")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("현재: $staff", Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                OutlinedButton(onClick = { vm.logoutStaff(); onClose() }) { Text("담당자 변경") }
+            }
+        }
+    }
+}
+
+/** 배치 미리보기: 실제 대시보드와 같은 가로×세로 격자 */
+@Composable
+private fun LayoutPreview(rows: Int, cols: Int) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFF5F5F5))
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        for (r in 0 until rows) {
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                for (c in 0 until cols) {
+                    val no = r * cols + c + 1
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .widthIn(max = 48.dp)
+                            .aspectRatio(1.2f)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFB0BEC5)),
+                        contentAlignment = Alignment.Center,
+                    ) { Text("$no", fontSize = 10.sp, color = Color.White) }
+                }
+            }
+        }
+    }
+}
