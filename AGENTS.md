@@ -26,7 +26,7 @@
 ## 2\. 기준 문서 우선순위
 
 1. **사용자의 최신 지시**  
-2. **`docs/festival-pub-android-spec.md` (동현 스펙 v2, 최종)** — 데이터 구조와 쓰기 동작의 기준  
+2. **`docs/festival-pub-android-spec.md` (동현 스펙 v3)** — 데이터 구조와 쓰기 동작의 기준. v3에서 웨이팅이 `waiting_private` / `waiting_public`으로 나뉘었다  
 3. **이 파일의 4장 (앱 동작 규칙)** — 화면과 UX의 기준  
 4. `docs/동현_전달사항.md` — 합의 과정 기록  
 5. `CLAUDE.md`, `docs/FIREBASE.md`, `docs/API.md` — 과거 설계. 참고만 한다.
@@ -88,21 +88,30 @@ Claude Code로 진행한 이력이다. 정확한 내용은 `git log --stat`으�
   - 초기화 필드는 동현 스펙과 같다.  
 - 격자는 **6열 고정**, 스크롤 없이 한 화면에 표시한다. `config/layout`은 쓰지 않는다.
 
-### 웨이팅
+### 웨이팅 (스펙 v3)
 
-- 조회: `status in [WAITING, NO_SHOW]`, `is_vip DESC`, `created_at ASC` (색인 있음).  
+- **`waiting` 컬렉션은 없다.** 웨이팅은 두 컬렉션이 짝을 이룬다.  
+  - `waiting_private/{전화번호}`: 원본. 문서 ID = **숫자만 남긴 전화번호**(하이픈·공백 제거). `public_id`로 짝을 가리킨다.  
+  - `waiting_public/{autoId}`: 전화번호 없는 사본(`is_vip`, `status`, `created_at`). **앱은 쓰기만 하고 구독하지 않는다.**  
+- 조회: `waiting_private`를 `status in [WAITING, NO_SHOW]`, `is_vip DESC`, `created_at ASC`로 구독한다(색인 있음).  
 - 화면에서 VIP가 맨 위, 일반은 등록순이고, `NO_SHOW`는 **아래쪽에 흐리게** 표시한다.  
-- 화면 순번: VIP는 "VIP", 일반은 1, 2, 3…이다. 자동 문서 ID는 노출하지 않는다.  
+- 화면 순번: VIP는 "VIP", 일반은 1, 2, 3…이다. 문서 ID(전화번호)를 순번으로 쓰지 않는다.  
 - **맨 위 팀을 탭하면 바로 전화**를 걸고 `called_at = now`를 기록한다. 다른 팀은 탭하면 상세 화면이 열린다.  
+  - **호출(`called_at`)은 private에만** 쓴다(public에는 호출 정보가 없다).  
 - "호출됨"은 `called_at != null`로 판단한다. 경과 시간을 표시한다.  
 - **호출 후 3분**(상수)이 지나면 \[무응답\] 버튼이 나타난다 → `status = NO_SHOW`.  
   - \[대기 복귀\] → `status = WAITING`. `created_at`을 유지하므로 원래 순서로 돌아간다.  
 - 취소 → `status = CANCELLED` (확인창).  
-- VIP 등록: 앱에서 `waiting`에 `is_vip = true`로 새 문서를 만든다.  
-- 착석 배정: **트랜잭션**으로 처리한다.  
-  - 테이블이 `EMPTY`인지, 웨이팅이 `WAITING` 또는 `NO_SHOW`인지 확인한다.  
-  - 테이블은 `SEATED_PENDING_PAYMENT` \+ `start_time = now`, 웨이팅은 `SEATED`로 바꾼다.  
-- 현장 손님 착석(웨이팅 없음): 테이블만 트랜잭션으로 바꾼다.
+- **무응답·복귀·취소·착석은 private와 public을 같은 status로, 항상 WriteBatch 또는 트랜잭션으로 한 번에** 바꾼다.  
+- 착석 배정: **트랜잭션 하나**로 처리한다.  
+  - 테이블이 `EMPTY`인지, private가 `WAITING` 또는 `NO_SHOW`인지 확인한다.  
+  - 테이블은 `SEATED_PENDING_PAYMENT` \+ `start_time = now`, private·public 모두 `SEATED`로 바꾼다.  
+- 현장 손님 착석(웨이팅 없음): 테이블만 트랜잭션으로 바꾼다.  
+- VIP 등록: **트랜잭션**으로 `waiting_private/{번호}`를 먼저 확인한다.  
+  - 없거나 `CANCELLED`/`SEATED` → 새 public(autoId, `is_vip: true`, `status: WAITING`, `created_at`) \+ private(`is_vip: true`, `called_at: null`, `public_id`)를 생성한다(덮어쓰기).  
+  - `WAITING`/`NO_SHOW` → 덮어쓰지 않고 "이미 대기 중인 번호입니다"로 안내한다(기존 짝이 끊어지지 않게).  
+- `party_size`는 **정수**로 저장한다(규칙이 `is int`를 검사).  
+- **`public_id`가 없거나 public 문서가 없으면** private만 바꾸고 경고 로그를 남긴다. 앱이 멈추면 안 되며, 없는 public을 새로 만들지 않는다.
 
 ### 주문·주방
 
@@ -125,7 +134,10 @@ Claude Code로 진행한 이력이다. 정확한 내용은 `git log --stat`으�
 
 - 앱을 시작하면 **Firebase Auth 로그인 상태를 먼저 확인**한다.  
   - 로그인하지 않았으면 로그인 화면(공용 계정 이메일/비밀번호)을 보여준다.  
-  - 세션이 만료되거나 권한 오류가 나면 로그인 화면으로 돌아간다.  
+  - **로그인 화면으로 보내는 것은 세션 만료(`UNAUTHENTICATED`), 계정 비활성화·삭제, 사용자가 직접 로그아웃한 경우뿐이다.**  
+  - 구독 중 `PERMISSION_DENIED`가 나면 **로그아웃하지 않는다.** 화면 상단에 막힌 컬렉션을 보여 준다(예: "웨이팅 목록(waiting_private)을 읽을 권한이 없습니다 — 관리자에게 문의"). 나머지 컬렉션은 계속 동작한다.  
+  - 쓰기가 권한 오류로 실패하면 어떤 작업이 막혔는지 스낵바로 알린다.  
+  - 설정의 로그아웃은 확인창을 거친다(다시 쓰려면 이메일·비밀번호가 필요하므로).  
 - 로그인 뒤에는 **담당자 이름을 선택하거나 입력**한다(로컬 상태). 이 이름은 `orders.added_by`에 쓴다.  
   - 스펙에 다른 담당자 필드가 없으므로 **새 필드는 쓰지 않는다.**  
 - 이메일과 비밀번호는 코드와 git에 넣지 않는다. 사용자가 앱에서 입력한다.
@@ -186,7 +198,7 @@ Claude Code로 진행한 이력이다. 정확한 내용은 `git log --stat`으�
    - 동시 착석, 오래된 화면에서의 종료, 배치 합계는 **Firestore 에뮬레이터**로 검증한다.  
    - 에뮬레이터용 v2 테스트 데이터 도구를 만든다: 테이블 1~~30, 메뉴 1~~4, 일반·VIP·NO\_SHOW 웨이팅, 주문.  
 8. **`firebase/`**  
-   - 규칙 파일은 동현이 배포한 규칙(스펙 3장)을 흉내 내는 **에뮬레이터 전용**으로 바꾼다.  
+   - 규칙 파일(`firebase/firestore.rules`)은 **운영에 배포된 규칙 전문과 한 글자도 다르지 않게** 둔다(설명은 `firebase/README.md`). 에뮬레이터 검증용이며 운영에 배포하지 않는다.  
    - 운영 프로젝트에는 절대 배포하지 않는다.  
 9. **문서**  
    - `CLAUDE.md`, `docs/FIREBASE.md`, `docs/API.md`, `mock-server/` 맨 위에 "구버전" 표시를 한다.  
