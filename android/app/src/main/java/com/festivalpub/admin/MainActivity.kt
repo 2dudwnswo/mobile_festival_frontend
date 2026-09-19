@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -57,6 +58,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.festivalpub.admin.data.AuthState
+import com.festivalpub.admin.data.FirebaseConnection
 import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.activeWaitings
 import com.festivalpub.admin.data.kitchenOrders
@@ -77,8 +79,23 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // 행사 중 화면이 꺼지지 않게
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (savedInstanceState == null) handleTabExtra(intent)
-        setContent { AppTheme { App(vm) } }
+        if (savedInstanceState == null && FirebaseConnection.initializationError == null) handleTabExtra(intent)
+        setContent {
+            AppTheme {
+                Column(if (BuildConfig.DEBUG) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize()) {
+                    if (BuildConfig.DEBUG) Text(
+                        if (FirebaseConnection.emulator) "테스트 DB(에뮬레이터)" else "⚠️ 실제 DB",
+                        color = Color.White,
+                        modifier = Modifier.fillMaxWidth().background(
+                            if (FirebaseConnection.emulator) Color(0xFF6A1B9A) else Color(0xFFB71C1C)
+                        ).padding(8.dp),
+                    )
+                    val error = FirebaseConnection.initializationError
+                    if (error != null) Text(error, modifier = Modifier.padding(16.dp), color = Color.Red)
+                    else Box(Modifier.weight(1f)) { App(vm) }
+                }
+            }
+        }
     }
 
     // "N번 테이블 시간 초과" 알림을 누르면 이미 떠 있는 화면으로 들어온다 (SINGLE_TOP)
@@ -89,7 +106,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleTabExtra(intent: Intent?) {
         val tab = intent?.getIntExtra(Notifications.EXTRA_TAB, -1) ?: -1
-        if (tab >= 0) vm.requestTab(tab)
+        if (tab >= 0 && FirebaseConnection.initializationError == null) vm.requestTab(tab)
     }
 }
 
@@ -119,12 +136,19 @@ fun App(vm: AppViewModel = viewModel()) {
         if (missing.isNotEmpty()) permLauncher.launch(missing.toTypedArray())
     }
 
+    val emulatorError by vm.emulatorError.collectAsStateWithLifecycle()
     val snap = snapshot
     val staffName = staff
+    Column(Modifier.fillMaxSize()) {
+        emulatorError?.let { Text(it, color = Color.White,
+            modifier = Modifier.fillMaxWidth().background(Color(0xFFB71C1C)).padding(8.dp)) }
+        Box(Modifier.weight(1f)) {
     if (authState != AuthState.SIGNED_IN || staffName == null || snap == null) {
         ConnectScreen(vm, authState, conn, snap, snackbar)
     } else {
         MainScaffold(vm, snap, staffName, conn, snackbar)
+    }
+        }
     }
 }
 

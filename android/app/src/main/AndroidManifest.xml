@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Firebase (모바일 데이터/핫스팟으로 인터넷 연결) -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -18,10 +18,14 @@
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
+        android:name=".FestivalApplication"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.FestivalPub">
+        <!-- 자동 기본 앱 생성 대신 연결 대상을 먼저 확정한다. -->
+        <provider android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider" tools:node="remove" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

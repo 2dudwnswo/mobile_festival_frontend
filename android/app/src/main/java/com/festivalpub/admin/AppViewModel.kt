@@ -46,6 +46,8 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Conn.CONNECTING)
 
     /** 끊긴 동안 쌓여 아직 서버로 가지 않은 쓰기 수 (연결되면 자동 전송) */
+    val emulatorError = repo.emulatorError
+
     val pendingWrites: StateFlow<Int> = repo.pendingWrites
 
     /** 1-O 담당자. 앱을 새로 실행할 때마다 다시 선택한다. */

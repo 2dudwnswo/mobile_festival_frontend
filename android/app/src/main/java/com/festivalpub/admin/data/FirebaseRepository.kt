@@ -36,11 +36,13 @@ class ActionException(message: String) : Exception(message)
 enum class AuthState { CHECKING, SIGNED_OUT, SIGNED_IN }
 
 /** 동현 v2. 로그인 후에만 구독하며 실제 데이터 쓰기는 화면의 액션에서만 실행한다. */
-class FirebaseRepository(context: Context, private val checkNetwork: Boolean = true) {
-    private val auth = FirebaseAuth.getInstance()
-    private val db = FirebaseFirestore.getInstance()
+class FirebaseRepository(context: Context, private val checkNetwork: Boolean = !FirebaseConnection.emulator) {
+    private val auth = FirebaseConnection.auth
+    private val db = FirebaseConnection.db
     private val cm = context.getSystemService(ConnectivityManager::class.java)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val _emulatorError = MutableStateFlow<String?>(null)
+    val emulatorError = _emulatorError.asStateFlow()
     private val _authState = MutableStateFlow(AuthState.CHECKING)
     val authState = _authState.asStateFlow()
     private val _network = MutableStateFlow(true)
@@ -86,8 +88,19 @@ class FirebaseRepository(context: Context, private val checkNetwork: Boolean = t
             runCatching { cm?.registerDefaultNetworkCallback(networkCallback) }
         }
         auth.addAuthStateListener(authListener)
+        if (FirebaseConnection.emulator) scope.launch {
+            while (isActive) {
+                val reachable = FirebaseConnection.emulatorReachable()
+                _network.value = reachable
+                _emulatorError.value = if (reachable) null else
+                    "테스트 DB 연결 실패: Firebase 에뮬레이터와 USB 연결(adb reverse)을 확인하세요. 운영 DB로 전환하지 않습니다."
+                delay(5_000)
+            }
+        }
     }
     suspend fun signIn(email: String, password: String) {
+        if (FirebaseConnection.emulator && !FirebaseConnection.emulatorReachable())
+            throw ActionException("테스트 DB 연결 실패: 에뮬레이터와 adb reverse를 확인하세요. 운영 DB로 전환하지 않습니다")
         try {
             auth.signInWithEmailAndPassword(email.trim(), password).await()
         } catch (e: CancellationException) { throw e
@@ -242,7 +255,7 @@ class FirebaseRepository(context: Context, private val checkNetwork: Boolean = t
         db.runTransaction { block(it) }.await()
     }
     private fun requireOnline(what: String) {
-        if (checkNetwork && !_network.value) throw ActionException(offlineMessage(what))
+        if ((checkNetwork || FirebaseConnection.emulator) && !_network.value) throw ActionException(offlineMessage(what))
     }
     private suspend fun <T> action(what: String, block: suspend () -> T): T {
         if (auth.currentUser == null) throw ActionException("먼저 로그인해 주세요")

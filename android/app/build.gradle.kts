@@ -5,6 +5,12 @@ plugins {
     id("com.google.gms.google-services")
 }
 
+// 운영 디버그는 매 빌드에 -PfirebaseDebugProduction=true를 명시해야 한다.
+val debugProduction = providers.gradleProperty("firebaseDebugProduction").orNull.let {
+    require(it == null || it == "true" || it == "false") { "firebaseDebugProduction은 true/false만 허용합니다" }
+    it == "true"
+}
+
 android {
     namespace = "com.festivalpub.admin"
     compileSdk = 34
@@ -18,7 +24,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "USE_FIREBASE_EMULATOR", (!debugProduction).toString())
+        }
         release {
+            buildConfigField("boolean", "USE_FIREBASE_EMULATOR", "false")
             isMinifyEnabled = false
             // 행사용 내부 배포: 디버그 키로 서명해서 APK를 바로 설치할 수 있게 함
             signingConfig = signingConfigs.getByName("debug")
@@ -33,6 +43,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
