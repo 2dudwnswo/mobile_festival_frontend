@@ -4,10 +4,11 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.util.Log
 import com.google.firebase.FirebaseNetworkException
 import com.google.firebase.FirebaseTooManyRequestsException
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
+import com.google.firebase.auth.FirebaseAuthException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
@@ -105,12 +106,15 @@ class FirebaseRepository(context: Context, private val checkNetwork: Boolean = !
             auth.signInWithEmailAndPassword(email.trim(), password).await()
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
-            throw ActionException(when (e) {
-                is FirebaseAuthInvalidCredentialsException, is FirebaseAuthInvalidUserException -> "이메일 또는 비밀번호를 확인하세요"
-                is FirebaseNetworkException -> "인터넷 연결을 확인하세요"
-                is FirebaseTooManyRequestsException -> "시도가 너무 많습니다. 잠시 후 다시 시도하세요"
-                else -> "로그인하지 못했습니다. 계정과 연결 상태를 확인하세요"
-            })
+            val code = when (e) {
+                is FirebaseAuthException -> e.errorCode
+                is FirebaseNetworkException -> "NETWORK"
+                is FirebaseTooManyRequestsException -> "TOO_MANY_REQUESTS"
+                else -> "UNKNOWN"
+            }
+            // 원인 파악용 로그 (이메일은 가림, 비밀번호는 다루지 않음)
+            Log.w("FestivalAuth", "로그인 실패 code=$code type=${e.javaClass.simpleName} detail=${maskEmails(e.message.orEmpty())}")
+            throw ActionException(loginErrorMessage(code, e.message))
         }
     }
     fun signOut() { stopListening(); _authState.value = AuthState.SIGNED_OUT; auth.signOut() }

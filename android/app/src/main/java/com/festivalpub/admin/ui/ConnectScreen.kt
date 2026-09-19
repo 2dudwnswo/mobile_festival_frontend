@@ -68,10 +68,10 @@ fun ConnectScreen(
 
 @Composable
 private fun PasswordLogin(vm: AppViewModel) {
-    var email by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(vm.lastEmail) } // 마지막으로 성공한 이메일을 미리 채움
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    Text("스태프 공용 계정의 이메일과 비밀번호를 입력하세요.", color = Color.Gray)
+    Text("스태프 공용 계정의 이메일과 비밀번호를 입력하세요. 성공한 이메일은 다음에 미리 채워집니다(비밀번호는 저장하지 않음).", color = Color.Gray)
     OutlinedTextField(
         value = email, onValueChange = { email = it }, label = { Text("이메일") },
         singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),

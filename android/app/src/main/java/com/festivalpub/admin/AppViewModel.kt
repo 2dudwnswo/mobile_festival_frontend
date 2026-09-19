@@ -1,10 +1,12 @@
 package com.festivalpub.admin
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.festivalpub.admin.data.ActionException
 import com.festivalpub.admin.data.AuthState
+import com.festivalpub.admin.data.FirebaseConnection
 import com.festivalpub.admin.data.FirebaseRepository
 import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.TableState
@@ -89,10 +91,17 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     // ---------------- 계정 · 담당자 ----------------
 
+    // 마지막으로 로그인에 성공한 이메일 (비밀번호는 저장하지 않음). 에뮬레이터/운영 모드를 따로 기억한다.
+    private val loginPrefs = app.getSharedPreferences("login", Context.MODE_PRIVATE)
+    private val emailKey = if (FirebaseConnection.emulator) "last_email_emulator" else "last_email_production"
+    val lastEmail: String get() = loginPrefs.getString(emailKey, "").orEmpty()
+
     fun signIn(email: String, password: String, onDone: () -> Unit = {}) {
+        val trimmed = email.trim()
         viewModelScope.launch {
             try {
-                repo.signIn(email, password)
+                repo.signIn(trimmed, password)
+                loginPrefs.edit().putString(emailKey, trimmed).apply()
             } catch (e: ActionException) {
                 _messages.tryEmit(e.message ?: "로그인 실패")
             } finally {
