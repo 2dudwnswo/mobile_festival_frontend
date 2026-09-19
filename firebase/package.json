@@ -4,8 +4,11 @@
   "private": true,
   "description": "축제 주점 Firebase 보안 규칙·에뮬레이터·테스트 도구",
   "scripts": {
-    "emulators": "firebase emulators:start --project demo-festival-pub",
-    "test:rules": "firebase emulators:exec --only firestore,auth --project demo-festival-pub \"node --test test/*.test.mjs\""
+    "emulators": "node scripts/emulators.mjs start",
+    "test:rules": "node scripts/emulators.mjs test",
+    "test:safety": "node --test test/safety.test.mjs",
+    "seed": "node --require ./scripts/local-network-only.cjs scripts/seed.mjs",
+    "deploy": "node scripts/deny-deploy.cjs"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",
