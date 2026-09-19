@@ -69,6 +69,8 @@ import com.festivalpub.admin.data.formatElapsed
 import com.festivalpub.admin.data.formatPhone
 import com.festivalpub.admin.data.minutesAgo
 import com.festivalpub.admin.data.noShowWaitings
+import com.festivalpub.admin.data.waitingLabel
+import com.festivalpub.admin.data.canMarkNoShow
 import com.festivalpub.admin.dialPhone
 
 // ============================================================
@@ -139,7 +141,7 @@ fun WaitingScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
                 items(noShows, key = { "n${it.key}" }) { w ->
                     WaitingCard(
                         waiting = w,
-                        rank = if (w.isVip) "VIP" else "-",
+                        rank = snap.waitingLabel(w),
                         isTop = false,
                         dimmed = true,
                         now = now,
@@ -187,7 +189,7 @@ private fun WaitingCard(
         waiting.isVip -> PubColors.VipBg
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
-    val calledElapsed = if (waiting.status == "CALLED" && waiting.calledAt != null) now - waiting.calledAt else null
+    val calledElapsed = if (waiting.status == "WAITING" && waiting.calledAt != null) now - waiting.calledAt else null
 
     Card(
         colors = CardDefaults.cardColors(containerColor = container),
@@ -250,8 +252,8 @@ private fun WaitingDetailSheet(vm: AppViewModel, snap: Snapshot, w: Waiting, now
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var confirmCancel by remember { mutableStateOf(false) }
-    val emptyTables = snap.tables.filter { !it.occupied }
-    val active = w.status == "WAITING" || w.status == "CALLED"
+    val emptyTables = snap.tables.filter { it.status == "EMPTY" }
+    val active = w.status == "WAITING"
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -269,13 +271,12 @@ private fun WaitingDetailSheet(vm: AppViewModel, snap: Snapshot, w: Waiting, now
                 Text(formatPhone(w.phone), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             }
             val statusLabel = when (w.status) {
-                "WAITING" -> "대기"
-                "CALLED" -> "호출됨 (${formatElapsed(now - (w.calledAt ?: now))} 경과)"
+                "WAITING" -> if (w.calledAt == null) "대기" else "호출됨 (${formatElapsed(now - w.calledAt)} 경과)"
                 "NO_SHOW" -> "무응답"
-                "SEATED" -> "착석 (${w.tableNo}번)"
+                "SEATED" -> "착석"
                 else -> "취소됨"
             }
-            Text("${w.partySize}명 · 대기번호 ${w.label} · ${formatClock(w.createdAt)} 등록 · $statusLabel", color = Color.Gray)
+            Text("${w.partySize}명 · 대기번호 ${snap.waitingLabel(w)} · ${formatClock(w.createdAt)} 등록 · $statusLabel", color = Color.Gray)
 
             Spacer(Modifier.height(16.dp))
             Button(
@@ -309,7 +310,7 @@ private fun WaitingDetailSheet(vm: AppViewModel, snap: Snapshot, w: Waiting, now
             }
 
             Spacer(Modifier.height(20.dp))
-            if (active) {
+            if (w.canMarkNoShow(now)) {
                 OutlinedButton(onClick = { vm.noShow(w); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
                     Text("무응답 처리 (다음 팀으로 넘기기)")
                 }

@@ -8,28 +8,28 @@ import org.junit.Test
 class TableStateTest {
 
     private val min = 60_000L
-    private val seatedAt = 1_000_000_000L
+    private val startTime = 1_000_000_000L
     private val settings = Settings() // 회전 100분, 임박 15분
 
     private fun occupied(extended: Int = 0) =
-        TableInfo(no = 1, status = "OCCUPIED", seatedAt = seatedAt, extendedMinutes = extended)
+        TableInfo(no = 1, status = "SEATED_PENDING_PAYMENT", startTime = startTime, extendedMinutes = extended.toLong())
 
     private fun stateAt(elapsedMs: Long, extended: Int = 0) =
-        occupied(extended).state(settings, seatedAt + elapsedMs)
+        occupied(extended).state(settings, startTime + elapsedMs)
 
     @Test
     fun `빈 테이블은 시간과 무관하게 빈자리`() {
         val t = TableInfo(no = 1)
-        assertEquals(TableState.EMPTY, t.state(settings, seatedAt + 500 * min))
+        assertEquals(TableState.EMPTY, t.state(settings, startTime + 500 * min))
         assertNull(t.endAt(settings))
-        assertNull(t.remainingMs(settings, seatedAt))
+        assertNull(t.remainingMs(settings, startTime))
     }
 
     @Test
     fun `착석 순간 100분 타이머 시작`() {
         val t = occupied()
-        assertEquals(seatedAt + 100 * min, t.endAt(settings))
-        assertEquals(100 * min, t.remainingMs(settings, seatedAt))
+        assertEquals(startTime + 100 * min, t.endAt(settings))
+        assertEquals(100 * min, t.remainingMs(settings, startTime))
         assertEquals(TableState.IN_USE, stateAt(0))
     }
 
@@ -48,7 +48,7 @@ class TableStateTest {
 
     @Test
     fun `10분 연장하면 경계가 95분(임박)과 110분(초과)으로 밀린다`() {
-        assertEquals(seatedAt + 110 * min, occupied(10).endAt(settings))
+        assertEquals(startTime + 110 * min, occupied(10).endAt(settings))
         assertEquals(TableState.IN_USE, stateAt(85 * min, extended = 10))
         assertEquals(TableState.IN_USE, stateAt(95 * min - 1, extended = 10))
         assertEquals(TableState.IMMINENT, stateAt(95 * min, extended = 10))
@@ -65,22 +65,22 @@ class TableStateTest {
 
     @Test
     fun `연장은 누적 합계로 계산 (10+20+30 = 60분)`() {
-        assertEquals(seatedAt + 160 * min, occupied(60).endAt(settings))
+        assertEquals(startTime + 160 * min, occupied(60).endAt(settings))
         assertEquals(TableState.IMMINENT, stateAt(145 * min, extended = 60))
     }
 
     @Test
-    fun `서버 설정(회전·임박 시간)이 바뀌면 그 값으로 계산`() {
+    fun `운영 상수(회전·임박 시간)이 바뀌면 그 값으로 계산`() {
         val s = Settings(rotationMinutes = 90, imminentMinutes = 10)
         val t = occupied()
-        assertEquals(TableState.IN_USE, t.state(s, seatedAt + 80 * min - 1))
-        assertEquals(TableState.IMMINENT, t.state(s, seatedAt + 80 * min))
-        assertEquals(TableState.OVERTIME, t.state(s, seatedAt + 90 * min))
+        assertEquals(TableState.IN_USE, t.state(s, startTime + 80 * min - 1))
+        assertEquals(TableState.IMMINENT, t.state(s, startTime + 80 * min))
+        assertEquals(TableState.OVERTIME, t.state(s, startTime + 90 * min))
     }
 
     @Test
-    fun `OCCUPIED 인데 seatedAt 이 없으면 이용중으로 취급 (잘못된 데이터 방어)`() {
-        val t = TableInfo(no = 1, status = "OCCUPIED", seatedAt = null)
-        assertEquals(TableState.IN_USE, t.state(settings, seatedAt))
+    fun `SEATED_PENDING_PAYMENT 인데 startTime 이 없으면 이용중으로 취급 (잘못된 데이터 방어)`() {
+        val t = TableInfo(no = 1, status = "SEATED_PENDING_PAYMENT", startTime = null)
+        assertEquals(TableState.IN_USE, t.state(settings, startTime))
     }
 }

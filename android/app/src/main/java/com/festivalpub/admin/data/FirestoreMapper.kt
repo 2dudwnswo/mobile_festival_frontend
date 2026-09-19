@@ -1,257 +1,99 @@
 package com.festivalpub.admin.data
 
-import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FieldValue
-import java.util.Calendar
-import java.util.Date
-import java.util.TimeZone
+import java.time.Instant
+import java.time.ZoneId
 
-/**
- * Firestore 경로·이름 상수. docs/FIREBASE.md 초안 기준이며 "친구 확인 필요" 항목이 섞여 있다.
- * 구조가 확정되어 바뀌면 이 파일(Fs, FirestoreMapper)만 고치면 되도록 모아 두었다.
- */
+/** 동현 v2 경로와 필드 문자열은 이 파일에서만 정의한다. */
 object Fs {
-    /** 스태프 공용 계정 이메일. firebase/firestore.rules 의 staff() 와 같아야 한다. 비밀번호는 코드에 두지 않는다. */
-    const val STAFF_EMAIL = "staff@festival-pub.local"
-
-    const val CONFIG = "config"
-    const val SETTINGS_DOC = "settings"
-    const val STAFF_DOC = "staff"
-
-    const val COUNTERS = "counters"
-    const val COUNTER_VIP = "vip"        // 앱 전용 (VIP 번호)
-    const val COUNTER_ORDERS = "orders"  // 🔶 QR 주문 웹과 공유 — 양쪽 모두 트랜잭션으로 증가
-
-    const val MENU = "menu"
     const val TABLES = "tables"
-    const val WAITINGS = "waitings"          // 일반 손님: 친구 서버만 생성
-    const val VIP_WAITINGS = "vipWaitings"   // VIP: 앱만 생성·수정
+    const val WAITING = "waiting"
+    const val MENU = "menu"
     const val ORDERS = "orders"
-    const val CLOCKS = "clocks"              // 기기 시계 보정용 (기기마다 자기 문서)
-
-    /** 앱이 구독하는 웨이팅 상태 (착석·취소된 팀은 쓰지 않음) */
-    val ACTIVE_WAITING = listOf("WAITING", "CALLED", "NO_SHOW")
-
-    /** 주문 구독 범위의 기준 시간대: 오늘 0시(한국 시간) 이후 주문만 */
-    val KST: TimeZone = TimeZone.getTimeZone("Asia/Seoul")
+    const val STATUS = "status"
+    const val TABLE_NO = "table_no"
+    const val START_TIME = "start_time"
+    const val PAYMENT_CONFIRMED = "payment_confirmed"
+    const val EXTENDED_MINUTES = "extended_minutes"
+    const val TOTAL_AMOUNT = "total_amount"
+    const val PHONE = "phone"
+    const val PARTY_SIZE = "party_size"
+    const val IS_VIP = "is_vip"
+    const val CALLED_AT = "called_at"
+    const val CREATED_AT = "created_at"
+    const val NAME = "name"
+    const val PRICE = "price"
+    const val TABLE_ID = "table_id"
+    const val MENU_ID = "menu_id"
+    const val MENU_NAME = "menu_name"
+    const val MENU_PRICE = "menu_price"
+    const val QUANTITY = "quantity"
+    const val ADDED_BY = "added_by"
+    val ACTIVE_WAITING = listOf("WAITING", "NO_SHOW")
 }
-
-/** Firestore 문서(Map) ↔ 앱 모델 변환. Firebase 없이 단위 테스트할 수 있게 Map 만 다룬다. */
 object FirestoreMapper {
-
-    // ---------------- 읽기: 문서 → 모델 ----------------
-
-    /** Timestamp / Date / 숫자(epoch ms) 를 epoch ms 로. 없거나 모르는 형식이면 null */
-    fun millis(v: Any?): Long? = when (v) {
-        is Timestamp -> v.seconds * 1000 + v.nanoseconds / 1_000_000
-        is Date -> v.time
-        is Number -> v.toLong()
-        else -> null
-    }
-
-    private fun int(v: Any?): Int? = (v as? Number)?.toInt()
-    private fun str(v: Any?): String? = v as? String
-
-    fun settings(d: Map<String, Any?>?): Settings {
-        val def = Settings()
-        if (d == null) return def
-        return Settings(
-            rows = int(d["rows"]) ?: def.rows,
-            cols = int(d["cols"]) ?: def.cols,
-            rotationMinutes = int(d["rotationMinutes"]) ?: def.rotationMinutes,
-            imminentMinutes = int(d["imminentMinutes"]) ?: def.imminentMinutes,
-            noShowMinutes = int(d["noShowMinutes"]) ?: def.noShowMinutes,
-        )
-    }
-
-    fun staff(d: Map<String, Any?>?): List<String> =
-        (d?.get("names") as? List<*>)?.filterIsInstance<String>().orEmpty()
-
-    fun menuItem(docId: String, d: Map<String, Any?>): MenuItem? {
-        val id = int(d["id"]) ?: docId.toIntOrNull() ?: return null
-        return MenuItem(
-            id = id,
-            name = str(d["name"]) ?: return null,
-            price = int(d["price"]) ?: return null,
-            category = str(d["category"]).orEmpty(),
-            soldOut = d["soldOut"] as? Boolean ?: false,
-        )
-    }
-
+    private fun long(v: Any?): Long? = when (v) { is Long -> v; is Int -> v.toLong(); else -> null }
+    private fun tableNumber(v: Any?): Int? = long(v)?.takeIf { it in 1..30 }?.toInt()
     fun table(docId: String, d: Map<String, Any?>): TableInfo? {
-        val no = int(d["no"]) ?: docId.toIntOrNull() ?: return null
-        return TableInfo(
-            no = no,
-            status = str(d["status"]) ?: "EMPTY",
-            seatedAt = millis(d["seatedAt"]),
-            extendedMinutes = int(d["extendedMinutes"]) ?: 0,
-            partySize = int(d["partySize"]),
-            phone = str(d["phone"]),
-            waitingId = int(d["waitingId"]),
-            waitingIsVip = d["waitingIsVip"] as? Boolean ?: false,
-        )
+        val no = tableNumber(d[Fs.TABLE_NO]) ?: return null
+        if (docId != no.toString()) return null
+        val status = d[Fs.STATUS] as? String ?: return null
+        if (status !in listOf("EMPTY", "SEATED_PENDING_PAYMENT", "IN_USE")) return null
+        val start = long(d[Fs.START_TIME])
+        if (status != "EMPTY" && start == null) return null
+        return TableInfo(no, status, start, long(d[Fs.EXTENDED_MINUTES]) ?: return null,
+            d[Fs.PAYMENT_CONFIRMED] as? Boolean ?: return null, long(d[Fs.TOTAL_AMOUNT]) ?: return null)
     }
-
-    /** [isVip] 는 문서가 어느 컬렉션(vipWaitings / waitings)에서 왔는지로 정한다. 필드 값은 믿지 않는다. */
-    fun waiting(docId: String, d: Map<String, Any?>, isVip: Boolean): Waiting? {
-        val id = int(d["id"]) ?: docId.toIntOrNull() ?: return null
-        return Waiting(
-            id = id,
-            phone = str(d["phone"]) ?: return null,
-            partySize = int(d["partySize"]) ?: return null,
-            isVip = isVip,
-            status = str(d["status"]) ?: "WAITING",
-            createdAt = millis(d["createdAt"]) ?: 0,
-            calledAt = millis(d["calledAt"]),
-            tableNo = int(d["tableNo"]),
-        )
+    fun waiting(docId: String, d: Map<String, Any?>): Waiting? {
+        val status = d[Fs.STATUS] as? String ?: return null
+        if (status !in listOf("WAITING", "NO_SHOW", "SEATED", "CANCELLED")) return null
+        return Waiting(docId, d[Fs.PHONE] as? String ?: return null,
+            long(d[Fs.PARTY_SIZE])?.takeIf { it > 0 } ?: return null,
+            d[Fs.IS_VIP] as? Boolean ?: return null, status,
+            long(d[Fs.CREATED_AT]) ?: return null, long(d[Fs.CALLED_AT]))
     }
-
-    fun order(docId: String, d: Map<String, Any?>): Order? {
-        val id = int(d["id"]) ?: docId.toIntOrNull() ?: return null
-        val lines = (d["items"] as? List<*>).orEmpty().mapNotNull { raw ->
-            val m = raw as? Map<*, *> ?: return@mapNotNull null
-            OrderLine(
-                menuId = int(m["menuId"]) ?: return@mapNotNull null,
-                name = m["name"] as? String ?: "",
-                price = int(m["price"]) ?: 0,
-                qty = int(m["qty"]) ?: return@mapNotNull null,
-            )
-        }
-        return Order(
-            id = id,
-            tableNo = int(d["tableNo"]) ?: return null,
-            items = lines,
-            total = int(d["total"]) ?: lines.sumOf { it.price * it.qty },
-            source = str(d["source"]) ?: "QR",
-            paymentStatus = str(d["paymentStatus"]) ?: "PENDING",
-            cookStatus = str(d["cookStatus"]) ?: "WAITING",
-            createdAt = millis(d["createdAt"]) ?: 0,
-            addedBy = str(d["addedBy"]),
-            paidAt = millis(d["paidAt"]),
-            paidBy = str(d["paidBy"]),
-            cookedAt = millis(d["cookedAt"]),
-            cookedBy = str(d["cookedBy"]),
-        )
+    fun menuItem(docId: String, d: Map<String, Any?>): MenuItem? {
+        return MenuItem(docId, d[Fs.NAME] as? String ?: return null,
+            long(d[Fs.PRICE])?.takeIf { it >= 0 } ?: return null)
     }
-
-    /**
-     * 화면에 보일 테이블 목록: 1..rows×cols 번호 순.
-     * 🔶 문서가 없는 번호는 빈자리로 채운다 (배치 변경 시 문서 관리는 서버 쪽 담당, 친구 확인 필요).
-     */
-    fun tablesForLayout(docs: Collection<TableInfo>, s: Settings): List<TableInfo> {
-        val byNo = docs.associateBy { it.no }
-        val n = (s.rows * s.cols).coerceAtLeast(0)
-        return (1..n).map { byNo[it] ?: TableInfo(no = it) }
+    fun order(docId: String, d: Map<String, Any?>): OrderLine? {
+        val status = d[Fs.STATUS] as? String ?: return null
+        if (status !in listOf("PENDING", "DONE")) return null
+        val price = long(d[Fs.MENU_PRICE])?.takeIf { it >= 0 } ?: return null
+        val qty = long(d[Fs.QUANTITY])?.takeIf { it > 0 } ?: return null
+        if (price > 0 && qty > Long.MAX_VALUE / price) return null
+        return OrderLine(docId, tableNumber(d[Fs.TABLE_ID]) ?: return null,
+            d[Fs.MENU_ID] as? String ?: return null, d[Fs.MENU_NAME] as? String ?: return null,
+            price, qty, d[Fs.ADDED_BY] as? String ?: return null, status,
+            long(d[Fs.CREATED_AT]) ?: return null)
     }
-
-    /** [nowMs] 가 속한 날의 0시(한국 시간) epoch ms. 주문 구독 범위(오늘 것만)에 쓴다. */
-    fun todayStartKst(nowMs: Long): Long {
-        val c = Calendar.getInstance(Fs.KST)
-        c.timeInMillis = nowMs
-        c.set(Calendar.HOUR_OF_DAY, 0)
-        c.set(Calendar.MINUTE, 0)
-        c.set(Calendar.SECOND, 0)
-        c.set(Calendar.MILLISECOND, 0)
-        return c.timeInMillis
+    /** 18시~다음 날 01시 행사: 한국 시간 오전 6시를 영업일 경계로 사용. */
+    fun businessDayStartKst(nowMs: Long): Long {
+        val now = Instant.ofEpochMilli(nowMs).atZone(ZoneId.of("Asia/Seoul"))
+        val date = if (now.hour < 6) now.toLocalDate().minusDays(1) else now.toLocalDate()
+        return date.atTime(6, 0).atZone(now.zone).toInstant().toEpochMilli()
     }
-
-    // ---------------- 쓰기: 모델 → 문서 필드 ----------------
-    // 모든 쓰기에 담당자 이름(updatedBy 등)과 서버 시각을 남긴다. 시각은 항상 serverTimestamp().
-
-    private val now: FieldValue get() = FieldValue.serverTimestamp()
-
-    fun seatFields(staff: String, partySize: Int?, phone: String?, waitingId: Int?, waitingIsVip: Boolean): Map<String, Any?> = mapOf(
-        "status" to "OCCUPIED",
-        "seatedAt" to now,
-        "extendedMinutes" to 0,
-        "partySize" to partySize,
-        "phone" to phone,
-        "waitingId" to waitingId,
-        "waitingIsVip" to waitingIsVip,
-        "updatedBy" to staff,
-        "updatedAt" to now,
-    )
-
-    fun releaseFields(staff: String): Map<String, Any?> = mapOf(
-        "status" to "EMPTY",
-        "seatedAt" to null,
-        "extendedMinutes" to 0,
-        "partySize" to null,
-        "phone" to null,
-        "waitingId" to null,
-        "waitingIsVip" to false,
-        "updatedBy" to staff,
-        "updatedAt" to now,
-    )
-
-    fun extendFields(staff: String, minutes: Int): Map<String, Any?> = mapOf(
-        "extendedMinutes" to FieldValue.increment(minutes.toLong()),
-        "updatedBy" to staff,
-        "updatedAt" to now,
-    )
-
-    /** 호출·무응답·복귀·취소. 호출은 calledAt 을 서버 시각으로, 복귀는 calledAt 을 비운다. */
-    fun waitingStatusFields(staff: String, status: String): Map<String, Any?> = buildMap {
-        put("status", status)
-        when (status) {
-            "CALLED" -> put("calledAt", now)
-            "WAITING" -> put("calledAt", null)
-        }
-        put("updatedBy", staff)
-        put("updatedAt", now)
+    fun seatFields(nowMs: Long): Map<String, Any?> = mapOf(Fs.STATUS to "SEATED_PENDING_PAYMENT", Fs.START_TIME to nowMs)
+    fun releaseFields(): Map<String, Any?> = mapOf(Fs.STATUS to "EMPTY", Fs.START_TIME to null,
+        Fs.PAYMENT_CONFIRMED to false, Fs.EXTENDED_MINUTES to 0L, Fs.TOTAL_AMOUNT to 0L)
+    fun confirmPaymentFields(): Map<String, Any?> = mapOf(Fs.PAYMENT_CONFIRMED to true, Fs.STATUS to "IN_USE")
+    fun extendFields(minutes: Int): Map<String, Any?> {
+        require(minutes in listOf(10, 20, 30))
+        return mapOf(Fs.EXTENDED_MINUTES to FieldValue.increment(minutes.toLong()))
     }
-
-    fun seatedWaitingFields(staff: String, tableNo: Int): Map<String, Any?> = mapOf(
-        "status" to "SEATED",
-        "tableNo" to tableNo,
-        "updatedBy" to staff,
-        "updatedAt" to now,
-    )
-
-    fun vipWaitingDoc(id: Int, phone: String, partySize: Int, staff: String): Map<String, Any?> = mapOf(
-        "id" to id,
-        "phone" to phone,
-        "partySize" to partySize,
-        "isVip" to true,
-        "status" to "WAITING",
-        "createdAt" to now,
-        "calledAt" to null,
-        "tableNo" to null,
-        "createdBy" to staff,
-        "updatedBy" to staff,
-        "updatedAt" to now,
-    )
-
-    /** 1-5 직원 주문. 입금확인은 서버가 하므로 항상 PENDING 으로 만든다 (paymentStatus 는 이후 절대 쓰지 않음). */
-    fun staffOrderDoc(id: Int, tableNo: Int, lines: List<OrderLine>, staff: String): Map<String, Any?> = mapOf(
-        "id" to id,
-        "tableNo" to tableNo,
-        "items" to lines.map { mapOf("menuId" to it.menuId, "name" to it.name, "price" to it.price, "qty" to it.qty) },
-        "total" to lines.sumOf { it.price * it.qty },
-        "source" to "STAFF",
-        "paymentStatus" to "PENDING",
-        "cookStatus" to "WAITING",
-        "createdAt" to now,
-        "addedBy" to staff,
-        "paidAt" to null,
-        "paidBy" to null,
-        "cookedAt" to null,
-        "cookedBy" to null,
-    )
-
-    fun cookedFields(staff: String): Map<String, Any?> = mapOf(
-        "cookStatus" to "DONE",
-        "cookedAt" to now,
-        "cookedBy" to staff,
-    )
-
-    /** 앱은 시간 값 3종만 쓴다. rows/cols 는 서버 쪽이 관리하므로 절대 보내지 않는다. */
-    fun timeSettingsFields(s: Settings, staff: String): Map<String, Any?> = mapOf(
-        "rotationMinutes" to s.rotationMinutes,
-        "imminentMinutes" to s.imminentMinutes,
-        "noShowMinutes" to s.noShowMinutes,
-        "updatedBy" to staff,
-        "updatedAt" to now,
-    )
+    fun callFields(nowMs: Long): Map<String, Any?> = mapOf(Fs.CALLED_AT to nowMs)
+    // v2 복귀는 status만 변경한다. 등록·호출 시각은 보존한다.
+    fun waitingStatusFields(status: String): Map<String, Any?> {
+        require(status in listOf("WAITING", "NO_SHOW", "SEATED", "CANCELLED"))
+        return mapOf(Fs.STATUS to status)
+    }
+    fun vipWaitingDoc(phone: String, partySize: Int, nowMs: Long): Map<String, Any?> = mapOf(
+        Fs.PHONE to phone, Fs.PARTY_SIZE to partySize.toLong(), Fs.IS_VIP to true,
+        Fs.STATUS to "WAITING", Fs.CREATED_AT to nowMs, Fs.CALLED_AT to null)
+    fun orderDoc(line: OrderLine): Map<String, Any?> = mapOf(
+        Fs.TABLE_ID to line.tableNo.toLong(), Fs.MENU_ID to line.menuId, Fs.MENU_NAME to line.name,
+        Fs.MENU_PRICE to line.price, Fs.QUANTITY to line.qty, Fs.ADDED_BY to line.addedBy,
+        Fs.STATUS to "PENDING", Fs.CREATED_AT to line.createdAt)
+    fun amountFields(amount: Long): Map<String, Any?> = mapOf(Fs.TOTAL_AMOUNT to FieldValue.increment(amount))
+    fun cookedFields(): Map<String, Any?> = mapOf(Fs.STATUS to "DONE")
 }

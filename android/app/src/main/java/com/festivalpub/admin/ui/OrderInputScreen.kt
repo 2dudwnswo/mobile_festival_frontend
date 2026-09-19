@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.festivalpub.admin.AppViewModel
 import com.festivalpub.admin.data.MenuItem
 import com.festivalpub.admin.data.Snapshot
@@ -55,17 +56,18 @@ import com.festivalpub.admin.data.formatWon
 // ============================================================
 // 1-5 주문 입력 (서빙 스태프용 · QR 주문의 예비 수단)
 //  테이블 선택 → 메뉴 탭해서 담기 → 수량 조절 → 전송(확인창 1회)
-//  직원 주문도 QR 주문과 똑같이 '입금대기'로 생성된다.
+//  직원 주문은 조리 대기 줄로 생성된다.
 // ============================================================
 @Composable
 fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
+    val sending by vm.orderSending.collectAsStateWithLifecycle()
     var tableNo by remember { mutableStateOf<Int?>(null) }
-    val cart = remember { mutableStateMapOf<Int, Int>() } // menuId → qty
+    val cart = remember { mutableStateMapOf<String, Int>() } // menuId → qty
     var confirm by remember { mutableStateOf(false) }
 
     val occupied = snap.tables.filter { it.occupied }
     val menuById = snap.menu.associateBy { it.id }
-    val total = cart.entries.sumOf { (id, qty) -> (menuById[id]?.price ?: 0) * qty }
+    val total = cart.entries.sumOf { (id, qty) -> (menuById[id]?.price ?: 0L) * qty }
 
     // 선택했던 테이블이 종료되면 선택 해제
     LaunchedEffect(occupied.map { it.no }) {
@@ -90,6 +92,7 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
                     val t = occupied[i]
                     FilterChip(
                         selected = tableNo == t.no,
+                        enabled = !sending,
                         onClick = { tableNo = t.no },
                         label = { Text("${t.no}번", fontSize = 16.sp, fontWeight = FontWeight.Bold) },
                     )
@@ -99,7 +102,7 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
         HorizontalDivider()
 
         // 메뉴 그리드 (카테고리별)
-        val grouped = snap.menu.groupBy { it.category.ifBlank { "메뉴" } }
+        val grouped = mapOf("메뉴" to snap.menu)
         LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             contentPadding = PaddingValues(10.dp),
@@ -112,7 +115,7 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
                     Text(category, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
                 }
                 items(list, key = { it.id }) { m ->
-                    MenuButton(m, cart[m.id] ?: 0) { cart[m.id] = (cart[m.id] ?: 0) + 1 }
+                    MenuButton(m, cart[m.id] ?: 0, enabled = !sending) { cart[m.id] = (cart[m.id] ?: 0) + 1 }
                 }
             }
         }
@@ -131,7 +134,7 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
                     val m = menuById[id] ?: return@forEach
                     Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(m.name, Modifier.weight(1f), fontSize = 16.sp)
-                        QtyButton("−") {
+                        QtyButton("−", enabled = !sending) {
                             if (qty <= 1) {
                                 cart.remove(id)
                             } else {
@@ -139,7 +142,7 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
                             }
                         }
                         Text("$qty", Modifier.padding(horizontal = 4.dp).size(width = 32.dp, height = 24.dp), textAlign = TextAlign.Center, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        QtyButton("+") { cart[id] = qty + 1 }
+                        QtyButton("+", enabled = !sending) { cart[id] = qty + 1 }
                         Text(formatWon(m.price * qty), Modifier.padding(start = 8.dp).size(width = 80.dp, height = 24.dp), textAlign = TextAlign.End)
                     }
                 }
@@ -150,13 +153,13 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            TextButton(onClick = { cart.clear() }, enabled = cart.isNotEmpty()) { Text("비우기") }
+            TextButton(onClick = { cart.clear() }, enabled = cart.isNotEmpty() && !sending) { Text("비우기") }
             Text(formatWon(total), Modifier.weight(1f), fontSize = 20.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End)
             Button(
                 onClick = { confirm = true },
-                enabled = tableNo != null && cart.isNotEmpty(),
+                enabled = tableNo != null && cart.isNotEmpty() && !sending,
                 modifier = Modifier.height(52.dp),
-            ) { Text(if (tableNo == null) "테이블 선택" else "${tableNo}번에 전송", fontSize = 16.sp) }
+            ) { Text(if (sending) "전송 중…" else if (tableNo == null) "테이블 선택" else "${tableNo}번에 전송", fontSize = 16.sp) }
         }
     }
 
@@ -171,7 +174,7 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
                         Text("${menuById[id]?.name ?: "?"} × $qty", fontSize = 16.sp)
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("합계 ${formatWon(total)} · 입금이 확인되면 주방으로 전달됩니다", color = Color.Gray, fontSize = 13.sp)
+                    Text("합계 ${formatWon(total)} · 전송하면 바로 주방에 표시됩니다", color = Color.Gray, fontSize = 13.sp)
                 }
             },
             confirmButton = {
@@ -186,12 +189,11 @@ fun OrderInputScreen(vm: AppViewModel, snap: Snapshot) {
 }
 
 @Composable
-private fun MenuButton(item: MenuItem, qty: Int, onClick: () -> Unit) {
+private fun MenuButton(item: MenuItem, qty: Int, enabled: Boolean, onClick: () -> Unit) {
     Box {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = when {
-                item.soldOut -> Color(0xFFEEEEEE)
                 qty > 0 -> MaterialTheme.colorScheme.primaryContainer
                 else -> MaterialTheme.colorScheme.surfaceVariant
             },
@@ -199,7 +201,7 @@ private fun MenuButton(item: MenuItem, qty: Int, onClick: () -> Unit) {
                 .fillMaxWidth()
                 .height(76.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(enabled = !item.soldOut, onClick = onClick),
+                .clickable(enabled = enabled, onClick = onClick),
         ) {
             Column(
                 Modifier.padding(8.dp),
@@ -207,8 +209,8 @@ private fun MenuButton(item: MenuItem, qty: Int, onClick: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(item.name, fontWeight = FontWeight.Bold, maxLines = 2, textAlign = TextAlign.Center,
-                    color = if (item.soldOut) Color.Gray else Color.Unspecified)
-                Text(if (item.soldOut) "품절" else formatWon(item.price), fontSize = 12.sp, color = Color.Gray)
+                    color = Color.Unspecified)
+                Text(formatWon(item.price), fontSize = 12.sp, color = Color.Gray)
             }
         }
         if (qty > 0) {
@@ -226,9 +228,10 @@ private fun MenuButton(item: MenuItem, qty: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun QtyButton(label: String, onClick: () -> Unit) {
+private fun QtyButton(label: String, enabled: Boolean, onClick: () -> Unit) {
     FilledTonalButton(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier.size(40.dp),
         contentPadding = PaddingValues(0.dp),
     ) { Text(label, fontSize = 20.sp) }

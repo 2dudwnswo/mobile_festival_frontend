@@ -12,7 +12,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -37,7 +36,7 @@ import com.festivalpub.admin.data.Snapshot
 
 /**
  * 1-O 시작 화면
- *  1) 스태프 공용 계정 비밀번호 — 폰마다 처음 한 번만 (이후 로그인 유지)
+ *  1) 스태프 공용 계정 이메일·비밀번호 (이후 로그인 유지)
  *  2) Firebase 연결 상태
  *  3) 담당자 선택 — 앱을 실행할 때마다
  */
@@ -60,7 +59,7 @@ fun ConnectScreen(
                 AuthState.SIGNED_OUT -> PasswordLogin(vm)
                 AuthState.SIGNED_IN -> {
                     ConnectionStatus(conn, snap)
-                    if (snap != null) StaffPicker(vm, snap)
+                    if (snap != null) StaffPicker(vm)
                 }
             }
         }
@@ -69,9 +68,15 @@ fun ConnectScreen(
 
 @Composable
 private fun PasswordLogin(vm: AppViewModel) {
+    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    Text("스태프 공용 비밀번호를 입력하세요. 이 폰에서는 처음 한 번만 입력하면 됩니다.", color = Color.Gray)
+    Text("스태프 공용 계정의 이메일과 비밀번호를 입력하세요.", color = Color.Gray)
+    OutlinedTextField(
+        value = email, onValueChange = { email = it }, label = { Text("이메일") },
+        singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+        modifier = Modifier.fillMaxWidth(),
+    )
     OutlinedTextField(
         value = password,
         onValueChange = { password = it },
@@ -84,9 +89,9 @@ private fun PasswordLogin(vm: AppViewModel) {
     Button(
         onClick = {
             busy = true
-            vm.signIn(password) { busy = false }
+            vm.signIn(email, password) { busy = false; password = "" }
         },
-        enabled = password.isNotBlank() && !busy,
+        enabled = email.isNotBlank() && password.isNotBlank() && !busy,
         modifier = Modifier.fillMaxWidth().height(52.dp),
     ) { Text(if (busy) "로그인 중…" else "로그인", fontSize = 18.sp) }
 }
@@ -103,21 +108,15 @@ private fun ConnectionStatus(conn: Conn, snap: Snapshot?) {
 }
 
 @Composable
-private fun StaffPicker(vm: AppViewModel, snap: Snapshot) {
+private fun StaffPicker(vm: AppViewModel) {
     var customName by remember { mutableStateOf("") }
     SectionTitle("담당자 선택")
-    Text("선택한 이름이 착석·호출·조리완료 기록에 남습니다.", color = Color.Gray, fontSize = 13.sp)
-    snap.staff.forEach { name ->
-        OutlinedButton(
-            onClick = { vm.selectStaff(name) },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-        ) { Text(name, fontSize = 18.sp) }
-    }
+    Text("입력한 이름이 직원 주문 기록에 남습니다.", color = Color.Gray, fontSize = 13.sp)
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
         value = customName,
         onValueChange = { customName = it },
-        label = { Text("목록에 없으면 이름 직접 입력") },
+        label = { Text("담당자 이름") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
     )

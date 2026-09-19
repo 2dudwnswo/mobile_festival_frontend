@@ -39,12 +39,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.festivalpub.admin.AppViewModel
-import com.festivalpub.admin.data.Order
+import com.festivalpub.admin.data.OrderLine
+import com.festivalpub.admin.data.paymentOverdue
 import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.TableInfo
 import com.festivalpub.admin.data.TableState
@@ -88,7 +88,10 @@ fun TablesScreen(vm: AppViewModel, snap: Snapshot, now: Long) {
             }
         }
 
-        // 웹서버가 정한 가로×세로 격자를 스크롤 없이 한 화면에 맞춘다.
+        val unpaid = snap.tables.count { it.paymentOverdue(now) }
+        if (unpaid > 0) Text("입금 미확인 ${unpaid}개", color = MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 12.dp))
+        // 6열 고정 격자를 스크롤 없이 한 화면에 맞춘다.
         // 타일 한 변 = min(가로 폭 ÷ 열 수, 사용 가능한 높이 ÷ 줄 수)
         val cols = s.cols.coerceAtLeast(1)
         val rows = gridRows(snap.tables.size, s.rows, cols)
@@ -149,6 +152,10 @@ private fun TableTile(
             .background(bg)
             .clickable(onClick = onClick),
     ) {
+        if (table.paymentOverdue(now)) {
+            Text("!", color = Color.White, fontWeight = FontWeight.Bold,
+                modifier = Modifier.align(Alignment.TopEnd).background(Color(0xFFB71C1C)).padding(horizontal = 4.dp))
+        }
         Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("${table.no}", fontSize = noSize, fontWeight = FontWeight.Bold, color = fg, maxLines = 1)
             // 타일이 작으면(열이 많을 때) 번호와 색만. 남은 시간은 상세 시트에서 본다.
@@ -211,7 +218,7 @@ private fun EmptyTableContent(vm: AppViewModel, snap: Snapshot, table: TableInfo
         ) {
             Column(Modifier.weight(1f)) {
                 Text("$rank · ${formatPhone(w.phone)}", fontWeight = FontWeight.Bold)
-                Text("${w.partySize}명 · ${if (w.status == "CALLED") "호출됨" else "대기"}", fontSize = 13.sp, color = Color.Gray)
+                Text("${w.partySize}명 · ${if (w.calledAt != null) "호출됨" else "대기"}", fontSize = 13.sp, color = Color.Gray)
             }
             Button(onClick = { vm.seat(table.no, w); onDismiss() }) { Text("착석") }
         }
@@ -228,7 +235,8 @@ private fun OccupiedTableContent(vm: AppViewModel, snap: Snapshot, table: TableI
     val s = snap.settings
     val st = table.state(s, now)
     val remaining = table.remainingMs(s, now) ?: 0L
-    var confirmRelease by remember { mutableStateOf(false) }
+    var releaseTarget by remember { mutableStateOf<TableInfo?>(null) }
+    var paymentTarget by remember { mutableStateOf<TableInfo?>(null) }
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("${table.no}번 테이블", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -248,14 +256,29 @@ private fun OccupiedTableContent(vm: AppViewModel, snap: Snapshot, table: TableI
         modifier = Modifier.padding(vertical = 4.dp),
     )
     val info = buildList {
-        add("착석 ${formatClock(table.seatedAt)}")
+        add("착석 ${formatClock(table.startTime)}")
         add("종료 ${formatClock(table.endAt(s))}")
-        table.partySize?.let { add("${it}명") }
         if (table.extendedMinutes > 0) add("연장 +${table.extendedMinutes}분")
     }.joinToString(" · ")
     Text(info, color = Color.Gray)
-    table.phone?.let { Text(formatPhone(it), color = Color.Gray) }
 
+    SectionTitle(if (table.paymentConfirmed) "입금 확인됨" else "입금 미확인")
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(formatWon(table.totalAmount), Modifier.weight(1f), fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        if (table.status == "SEATED_PENDING_PAYMENT" && !table.paymentConfirmed) {
+            Button(onClick = { paymentTarget = table }) { Text("입금확인") }
+        }
+    }
+    val payment = paymentTarget
+    if (payment != null) {
+        ConfirmDialog(title = "${payment.no}번 테이블 입금확인",
+            text = "${formatWon(payment.totalAmount)} 입금을 확인했나요?",
+            confirmLabel = "입금확인",
+            onConfirm = {
+                vm.confirmPayment(payment.no, payment.startTime, payment.totalAmount)
+                paymentTarget = null
+            }, onDismiss = { paymentTarget = null })
+    }
     SectionTitle("시간 연장")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         listOf(10, 20, 30).forEach { m ->
@@ -265,11 +288,10 @@ private fun OccupiedTableContent(vm: AppViewModel, snap: Snapshot, table: TableI
         }
     }
 
-    // 주문 내역 + 합계 (서버가 입금을 확인한 주문만)
+    // 현재 착석 이후 주문 내역과 테이블에 저장된 합계
     val orders = snap.ordersForTable(table)
     SectionTitle("주문 내역")
-    Text("주문 합계 ${formatWon(orders.sumOf { it.total })}", fontWeight = FontWeight.Bold)
-    Text("입금이 확인된 주문만 표시됩니다", color = Color.Gray, fontSize = 13.sp)
+    Text("주문 합계 ${formatWon(table.totalAmount)}", fontWeight = FontWeight.Bold)
     Spacer(Modifier.height(8.dp))
     if (orders.isEmpty()) Text("아직 주문이 없습니다", color = Color.Gray)
     orders.forEach { o ->
@@ -281,48 +303,37 @@ private fun OccupiedTableContent(vm: AppViewModel, snap: Snapshot, table: TableI
     HorizontalDivider()
     Spacer(Modifier.height(16.dp))
     Button(
-        onClick = { confirmRelease = true },
+        onClick = { releaseTarget = table },
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
         modifier = Modifier.fillMaxWidth().height(52.dp),
     ) { Text("이용 종료 (빈자리로)", fontSize = 16.sp) }
 
-    if (confirmRelease) {
+    val release = releaseTarget
+    if (release != null) {
         ConfirmDialog(
-            title = "${table.no}번 테이블 이용 종료",
+            title = "${release.no}번 테이블 이용 종료",
             text = "테이블을 정리하고 빈자리로 돌립니다.",
             confirmLabel = "종료",
             destructive = true,
-            onConfirm = { vm.release(table.no); onDismiss() },
-            onDismiss = { confirmRelease = false },
+            onConfirm = { vm.release(release.no, release.startTime); releaseTarget = null; onDismiss() },
+            onDismiss = { releaseTarget = null },
         )
     }
 }
 
 // ============================================================
-// 주문 카드 (테이블 상세). 입금확인된 주문만 들어온다.
+// 주문 카드 (테이블 상세): 자동 문서 ID는 화면에 노출하지 않는다.
 // ============================================================
 @Composable
-private fun OrderCard(order: Order) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
+private fun OrderCard(order: OrderLine) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            val head = buildString {
-                append("#${order.id} · ${formatClock(order.createdAt)}")
-                append(if (order.source == "QR") " · QR" else " · 직원(${order.addedBy ?: "-"})")
-            }
-            Text(head, fontSize = 13.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            order.items.forEach { line ->
-                Row(Modifier.fillMaxWidth().padding(top = 2.dp)) {
-                    Text("${line.name} × ${line.qty}", Modifier.weight(1f))
-                    Text(formatWon(line.price * line.qty), color = Color.Gray)
-                }
-            }
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(formatWon(order.total), Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                val cook = if (order.cookStatus == "DONE") "조리완료" else "조리중"
-                Text(cook, fontSize = 13.sp, color = Color(0xFF2E7D32))
+            Text("${formatClock(order.createdAt)} · ${order.addedBy}", fontSize = 13.sp, color = Color.Gray)
+            Text("${order.name} × ${order.qty}", fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(formatWon(order.total), Modifier.weight(1f), fontSize = 18.sp)
+                Text(if (order.status == "DONE") "조리완료" else "조리중", fontSize = 13.sp)
             }
         }
     }

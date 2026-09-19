@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import com.festivalpub.admin.data.ActionException
 import com.festivalpub.admin.data.AuthState
 import com.festivalpub.admin.data.FirebaseRepository
-import com.festivalpub.admin.data.Settings
 import com.festivalpub.admin.data.Snapshot
 import com.festivalpub.admin.data.TableState
 import com.festivalpub.admin.data.Waiting
@@ -53,7 +52,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     private val _staff = MutableStateFlow<String?>(null)
     val staff: StateFlow<String?> = _staff.asStateFlow()
 
-    /** 서버 시계 기준 현재 시각. 1초마다 갱신 → 모든 타이머가 이 값으로 계산됨 */
+    /** 기기 시계 기준 현재 시각. 1초마다 갱신 → 모든 타이머가 이 값으로 계산됨 */
     private val _now = MutableStateFlow(System.currentTimeMillis())
     val now: StateFlow<Long> = _now.asStateFlow()
 
@@ -73,7 +72,7 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         Notifications.createChannels(app)
         viewModelScope.launch {
             while (isActive) {
-                val t = System.currentTimeMillis() + repo.clockOffset
+                val t = System.currentTimeMillis()
                 _now.value = t
                 checkAlerts(t)
                 delay(1000 - (System.currentTimeMillis() % 1000))
@@ -88,10 +87,10 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
 
     // ---------------- 계정 · 담당자 ----------------
 
-    fun signIn(password: String, onDone: () -> Unit = {}) {
+    fun signIn(email: String, password: String, onDone: () -> Unit = {}) {
         viewModelScope.launch {
             try {
-                repo.signIn(password)
+                repo.signIn(email, password)
             } catch (e: ActionException) {
                 _messages.tryEmit(e.message ?: "로그인 실패")
             } finally {
@@ -155,9 +154,12 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         knownImminent = imminent
     }
 
+    private val _orderSending = MutableStateFlow(false)
+    val orderSending: StateFlow<Boolean> = _orderSending.asStateFlow()
+
     // ---------------- Firebase 쓰기 ----------------
 
-    /** 모든 쓰기에 담당자 이름을 남긴다. 실패하면 한국어 메시지를 스낵바로. */
+    /** 담당자 선택 뒤 액션을 허용한다. 담당자 이름은 주문 added_by에만 기록한다. */
     private fun write(onOk: () -> Unit = {}, block: suspend (staff: String) -> Unit) {
         val staff = _staff.value ?: run { _messages.tryEmit("담당자를 먼저 선택하세요"); return }
         viewModelScope.launch {
@@ -170,40 +172,41 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // 테이블
-    fun seat(tableNo: Int, waiting: Waiting?) = write { repo.seat(it, tableNo, waiting) }
-
-    fun extend(tableNo: Int, minutes: Int) = write { repo.extend(it, tableNo, minutes) }
-
-    /** 지금 화면(스냅샷)에 보이는 착석 시각과 같을 때만 종료 → 늦게 갱신된 화면에서 새 손님 테이블을 비우는 사고 방지 */
-    fun release(tableNo: Int) {
-        val seatedAt = snapshot.value?.tables?.find { it.no == tableNo }?.seatedAt
-        write { repo.release(it, tableNo, seatedAt) }
+    fun seat(tableNo: Int, waiting: Waiting?) = write { repo.seat(tableNo, waiting) }
+    fun extend(tableNo: Int, minutes: Int) = write { repo.extend(tableNo, minutes) }
+    // 확인창을 열 때 보던 착석 시각을 그대로 전달한다.
+    fun release(tableNo: Int, expectedStartTime: Long?) = write { repo.release(tableNo, expectedStartTime) }
+    fun confirmPayment(tableNo: Int, expectedStartTime: Long?, expectedAmount: Long) = write {
+        val current = snapshot.value?.tables?.find { it.no == tableNo }
+        if (expectedStartTime == null || current?.startTime != expectedStartTime ||
+            current.totalAmount != expectedAmount || current.status != "SEATED_PENDING_PAYMENT") {
+            throw ActionException("테이블 또는 금액이 바뀌었습니다. 다시 확인해 주세요")
+        }
+        repo.confirmPayment(tableNo)
     }
-
-    // 웨이팅 (일반은 waitings, VIP 는 vipWaitings — Waiting.isVip 로 구분)
     fun addVip(phone: String, partySize: Int, onOk: () -> Unit) =
-        write(onOk) { repo.addVip(it, phone.filter { c -> c.isDigit() }, partySize) }
-
-    // 호출 기록은 Firestore 오프라인 쓰기 큐를 탄다: LTE 가 끊겨 있어도 화면에 바로 "호출됨"이 되고,
-    // 연결되면 자동으로 전송된다. (예전 LAN 방식의 재시도 로직 대체)
-    fun callWaiting(w: Waiting) = write { repo.setWaitingStatus(it, w, "CALLED") }
-    fun noShow(w: Waiting) = write { repo.setWaitingStatus(it, w, "NO_SHOW") }
-    fun restoreWaiting(w: Waiting) = write { repo.setWaitingStatus(it, w, "WAITING") }
-    fun cancelWaiting(w: Waiting) = write { repo.setWaitingStatus(it, w, "CANCELLED") }
-
-    // 주문 (입금확인·주문취소는 서버가 한다. 앱은 직원 주문 생성과 조리완료만)
-    fun createOrder(tableNo: Int, cart: Map<Int, Int>, onOk: () -> Unit) =
-        write(onOk) { repo.createOrder(it, tableNo, cart) }
-
-    fun cooked(orderId: Int) = write { repo.cooked(it, orderId) }
-
-    /** 주방 탭에 새 주문(서버가 PAID 로 바꾼 주문)이 들어왔을 때 짧은 알림음 */
+        write(onOk) { repo.addVip(phone.filter { c -> c.isDigit() }, partySize) }
+    fun callWaiting(w: Waiting) = write { repo.callWaiting(w) }
+    fun noShow(w: Waiting) = write { repo.setWaitingStatus(w, "NO_SHOW") }
+    fun restoreWaiting(w: Waiting) = write { repo.setWaitingStatus(w, "WAITING") }
+    fun cancelWaiting(w: Waiting) = write { repo.setWaitingStatus(w, "CANCELLED") }
+    fun createOrder(tableNo: Int, cart: Map<String, Int>, onOk: () -> Unit) {
+        if (_orderSending.value) return
+        val operator = _staff.value ?: return
+        _orderSending.value = true
+        viewModelScope.launch {
+            try {
+                repo.createOrder(operator, tableNo, cart)
+                onOk()
+            } catch (e: ActionException) {
+                _messages.tryEmit(e.message ?: "주문을 저장하지 못했습니다")
+            } finally {
+                _orderSending.value = false
+            }
+        }
+    }
+    fun cooked(ids: List<String>) = write { repo.cooked(ids) }
     fun newOrderChime() = alerts.newOrder()
-
-    // 설정 (시간 값만. 테이블 배치 rows/cols 는 서버 쪽이 관리하므로 보내지 않는다)
-    fun saveSettings(s: Settings) =
-        write(onOk = { _messages.tryEmit("설정을 저장했습니다") }) { repo.saveTimeSettings(it, s) }
 
     override fun onCleared() {
         // 앱을 완전히 종료(액티비티 finish)하면 서비스도 멈춘다
