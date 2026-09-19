@@ -4,7 +4,7 @@
 
 ## 안전장치
 
-- Debug 기본: Auth 127.0.0.1:9099, Firestore 127.0.0.1:8080. 프로젝트 네임스페이스는 mobokfestivalpub.
+- Debug 기본: Auth 127.0.0.1:9099, Firestore 127.0.0.1:8080. 에뮬레이터 프로젝트 ID는 **`demo-festival-pub`**(앱 debug·시드·테스트·실행 스크립트 공통, `scripts/emulator-guard.mjs`의 `PROJECT_ID`). 운영 ID `mobokfestivalpub`는 release와 운영 debug에서만 쓴다.
 - 테스트 FirebaseApp에는 가짜 API 키를 사용하고 운영과 다른 이름(local-emulator)으로 세션을 분리한다. google-services.json의 운영 키를 테스트에 사용하지 않는다.
 - FirebaseInitProvider 자동 초기화를 제거했다. Application에서 useEmulator를 설정한 뒤 Repository가 SDK를 사용한다. 초기화 실패 시 앱 접근을 차단한다.
 - 연결 실패 시 테스트 DB 오류를 표시하며 운영으로 전환하는 코드가 없다.
@@ -15,7 +15,7 @@
 - 지원 진입점은 아래 npm 명령만이다. emulators.mjs는 start/test 외 인자를 거부하고 외부 TCP/HTTP를 차단한다. 원시 firebase CLI에 임의 config/project를 지정하는 행위까지 OS 차원에서 막는 장치는 아니다.
 - 자동 다운로드도 차단된다. 필요한 CLI 패키지와 Firestore 에뮬레이터 JAR은 사전 설치돼 있어야 한다.
 
-동일 프로젝트 ID라도 로컬 주소로 명시된 두 서비스의 데이터는 운영과 분리된다. 프로젝트 ID 자체가 격리를 보장하는 것은 아니다. 에뮬레이터로 지정하지 않은 제품을 호출하면 운영에 접근할 수 있으므로 이 도구는 Auth/Firestore만 실행하고 외부 네트워크도 차단한다.
+`demo-`로 시작하는 프로젝트 ID는 Firebase가 "실제 프로젝트 없음"으로 취급한다. 에뮬레이터로 지정하지 않은 제품을 호출해도 운영 리소스에 닿지 않고 실패하며, 이 ID로는 배포 대상도 존재하지 않는다. 그 위에 Node 도구의 외부 네트워크 차단(loopback만 허용)을 이중으로 둔다. 안전장치 테스트가 모든 에뮬레이터 설정의 ID가 `demo-`로 시작하는지 검사한다.
 
 공식 문서: [Firestore 연결](https://firebase.google.com/docs/emulator-suite/connect_firestore), [Auth 연결](https://firebase.google.com/docs/emulator-suite/connect_auth).
 

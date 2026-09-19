@@ -16,7 +16,10 @@ import kotlinx.coroutines.withContext
 
 /** 초기화의 유일한 진입점. 실패 시 운영으로 재시도하지 않는다. */
 object FirebaseConnection {
-    const val PROJECT_ID = "mobokfestivalpub"
+    /** 운영 프로젝트: release 와 운영 debug(-PfirebaseDebugProduction=true)에서만 쓴다. */
+    const val PRODUCTION_PROJECT_ID = "mobokfestivalpub"
+    /** 에뮬레이터 전용. demo- 로 시작하는 ID는 실제 Firebase 리소스에 절대 연결되지 않는다. */
+    const val EMULATOR_PROJECT_ID = "demo-festival-pub"
     const val HOST = "127.0.0.1" // USB 실기기: adb reverse
     const val FIRESTORE_PORT = 8080
     const val AUTH_PORT = 9099
@@ -34,11 +37,11 @@ object FirebaseConnection {
         try {
             // 테스트는 실제 API 키를 사용하지 않는다. 운영과 앱 이름·세션·캐시도 분리한다.
             val options = if (emulator) FirebaseOptions.Builder()
-                .setProjectId(PROJECT_ID)
+                .setProjectId(EMULATOR_PROJECT_ID.also { check(it.startsWith("demo-")) })
                 .setApplicationId("1:1234567890:android:emulatoronly")
                 .setApiKey("fake-emulator-key").build()
             else FirebaseOptions.fromResource(context)?.also {
-                check(it.projectId == PROJECT_ID) { "Firebase 프로젝트 설정을 확인하세요" }
+                check(it.projectId == PRODUCTION_PROJECT_ID) { "Firebase 프로젝트 설정을 확인하세요" }
             } ?: error("Firebase 설정 파일이 없습니다")
             val app = FirebaseApp.initializeApp(context, options, if (emulator) "local-emulator" else "production")
             auth = FirebaseAuth.getInstance(app)

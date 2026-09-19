@@ -1,4 +1,7 @@
-export const PROJECT_ID = 'mobokfestivalpub';
+// 에뮬레이터 전용 프로젝트 ID. demo- 로 시작하면 Firebase CLI·SDK 가 실제 리소스에 연결하지 않는다.
+// 운영 ID(mobokfestivalpub)는 이 도구들에서 절대 쓰지 않는다.
+export const PROJECT_ID = 'demo-festival-pub';
+if (!PROJECT_ID.startsWith('demo-')) throw new Error('에뮬레이터 프로젝트 ID는 demo- 로 시작해야 합니다');
 export function requireEmulators(env = process.env) {
   const parse = (name, port) => {
     const value = env[name];
