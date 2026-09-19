@@ -28,6 +28,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +53,7 @@ fun SettingsScreen(
     onClose: () -> Unit,
 ) {
     val current = snap.settings
+    var confirmSignOut by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -104,10 +109,22 @@ fun SettingsScreen(
                 fontSize = 13.sp,
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { vm.signOut(); onClose() }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { confirmSignOut = true }, modifier = Modifier.fillMaxWidth()) {
                 Text("로그아웃", color = MaterialTheme.colorScheme.error)
             }
         }
+    }
+
+    // 로그아웃하면 공용 계정 비밀번호를 다시 입력해야 하므로 확인창을 띄운다
+    if (confirmSignOut) {
+        ConfirmDialog(
+            title = "로그아웃",
+            text = "이 폰에서 스태프 계정을 로그아웃합니다. 다시 쓰려면 이메일과 비밀번호를 입력해야 합니다.",
+            confirmLabel = "로그아웃",
+            destructive = true,
+            onConfirm = { vm.signOut(); onClose() },
+            onDismiss = { confirmSignOut = false },
+        )
     }
 
 }

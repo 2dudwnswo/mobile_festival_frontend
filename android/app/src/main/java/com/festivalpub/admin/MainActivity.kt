@@ -137,11 +137,15 @@ fun App(vm: AppViewModel = viewModel()) {
     }
 
     val emulatorError by vm.emulatorError.collectAsStateWithLifecycle()
+    val blockedReads by vm.blockedReads.collectAsStateWithLifecycle()
     val snap = snapshot
     val staffName = staff
     Column(Modifier.fillMaxSize()) {
         emulatorError?.let { Text(it, color = Color.White,
             modifier = Modifier.fillMaxWidth().background(Color(0xFFB71C1C)).padding(8.dp)) }
+        // 권한이 거부된 컬렉션: 막힌 것만 알리고 나머지 화면은 계속 동작
+        blockedReads.values.forEach { Text(it, color = Color.White, fontSize = 13.sp,
+            modifier = Modifier.fillMaxWidth().background(Color(0xFFE65100)).padding(horizontal = 8.dp, vertical = 6.dp)) }
         Box(Modifier.weight(1f)) {
     if (authState != AuthState.SIGNED_IN || staffName == null || snap == null) {
         ConnectScreen(vm, authState, conn, snap, snackbar)

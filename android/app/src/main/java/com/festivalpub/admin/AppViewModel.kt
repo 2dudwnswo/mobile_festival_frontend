@@ -50,6 +50,9 @@ class AppViewModel(private val app: Application) : AndroidViewModel(app) {
     /** 끊긴 동안 쌓여 아직 서버로 가지 않은 쓰기 수 (연결되면 자동 전송) */
     val emulatorError = repo.emulatorError
 
+    /** 권한이 거부되어 읽지 못하는 컬렉션 문구 (로그아웃하지 않고 화면 상단에 표시) */
+    val blockedReads: StateFlow<Map<String, String>> = repo.blocked
+
     val pendingWrites: StateFlow<Int> = repo.pendingWrites
 
     /** 1-O 담당자. 앱을 새로 실행할 때마다 다시 선택한다. */
