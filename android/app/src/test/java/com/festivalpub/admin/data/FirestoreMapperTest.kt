@@ -9,7 +9,7 @@ class FirestoreMapperTest {
     private val empty = mapOf<String, Any?>("table_no" to 1L, "status" to "EMPTY", "start_time" to null,
         "payment_confirmed" to false, "extended_minutes" to 0L, "total_amount" to 0L)
     private val waiting = mapOf<String, Any?>("phone" to "01000000001", "party_size" to 3L, "is_vip" to true,
-        "status" to "WAITING", "created_at" to 123L, "called_at" to null)
+        "status" to "WAITING", "created_at" to 123L, "called_at" to null, "public_id" to "pub-1")
     private val line = OrderLine("auto-order", 1, "menu-string", "메뉴", 3_000_000_000L, 2, "영준", createdAt = 1234)
 
     @Test fun `테이블 문자열 ID와 숫자 table_no 일치`() {
@@ -27,17 +27,59 @@ class FirestoreMapperTest {
         assertNull(FirestoreMapper.table("1", empty + ("status" to "IN_USE")))
     }
     @Test fun `시각의 문자열과 소수는 임의 변환하지 않는다`() {
-        assertNull(FirestoreMapper.waiting("auto", waiting + ("created_at" to "123")))
-        assertNull(FirestoreMapper.waiting("auto", waiting + ("created_at" to 123.5)))
+        assertNull(FirestoreMapper.waiting("01000000001", waiting + ("created_at" to "123")))
+        assertNull(FirestoreMapper.waiting("01000000001", waiting + ("created_at" to 123.5)))
     }
-    @Test fun `자동 ID 웨이팅과 문서 is_vip 사용`() {
-        val w = FirestoreMapper.waiting("aRandomId", waiting)!!
-        assertEquals("aRandomId", w.key); assertTrue(w.isVip); assertEquals(3L, w.partySize)
-        assertFalse(FirestoreMapper.waiting("another", waiting + ("is_vip" to false))!!.isVip)
+    @Test fun `v3 waiting_private - 문서 ID 가 전화번호, public_id 연결, 문서 is_vip 사용`() {
+        val w = FirestoreMapper.waiting("01000000001", waiting)!!
+        assertEquals("01000000001", w.key); assertEquals("01000000001", w.phone)
+        assertTrue(w.isVip); assertEquals(3L, w.partySize); assertEquals("pub-1", w.publicId)
+        assertFalse(FirestoreMapper.waiting("01000000001", waiting + ("is_vip" to false))!!.isVip)
+    }
+    @Test fun `v3 public_id 가 없거나 비어 있어도 목록에서 빠지지 않는다`() {
+        assertNull(FirestoreMapper.waiting("01000000001", waiting - "public_id")!!.publicId)
+        assertNull(FirestoreMapper.waiting("01000000001", waiting + ("public_id" to ""))!!.publicId)
+    }
+    @Test fun `v3 문서 ID 가 전화번호 형식이 아니거나 phone 필드와 다르면 거절`() {
+        assertNull(FirestoreMapper.waiting("aRandomId", waiting))
+        assertNull(FirestoreMapper.waiting("010-0000-0001", waiting))
+        assertNull(FirestoreMapper.waiting("01000000002", waiting))
+        // phone 필드가 없으면 문서 ID 를 쓴다
+        assertEquals("01000000001", FirestoreMapper.waiting("01000000001", waiting - "phone")!!.phone)
     }
     @Test fun `웨이팅 NO_SHOW 허용 CALLED 거절`() {
-        assertEquals("NO_SHOW", FirestoreMapper.waiting("a", waiting + ("status" to "NO_SHOW"))!!.status)
-        assertNull(FirestoreMapper.waiting("a", waiting + ("status" to "CALLED")))
+        assertEquals("NO_SHOW", FirestoreMapper.waiting("01000000001", waiting + ("status" to "NO_SHOW"))!!.status)
+        assertNull(FirestoreMapper.waiting("01000000001", waiting + ("status" to "CALLED")))
+    }
+    @Test fun `전화번호 정규화 - 숫자만, 하이픈·공백 제거, 길이 확인`() {
+        assertEquals("01000000001", FirestoreMapper.normalizePhone("010-0000-0001"))
+        assertEquals("01000000001", FirestoreMapper.normalizePhone(" 010 0000 0001 "))
+        assertEquals("0212345678", FirestoreMapper.normalizePhone("02-1234-5678"))
+        assertNull(FirestoreMapper.normalizePhone("010-000"))
+        assertNull(FirestoreMapper.normalizePhone("010000000012"))
+        assertNull(FirestoreMapper.normalizePhone(""))
+    }
+    @Test fun `상태 변경 대상 - public_id 가 있으면 private·public 둘 다 같은 status`() {
+        for (status in listOf("NO_SHOW", "WAITING", "CANCELLED", "SEATED")) {
+            val plan = FirestoreMapper.statusPlan("pub-1", status)
+            assertEquals(mapOf("status" to status), plan.privateFields)
+            assertEquals("pub-1", plan.publicId)
+            assertEquals(plan.privateFields, plan.publicFields)
+        }
+    }
+    @Test fun `상태 변경 대상 - public_id 가 없거나 비면 private 만`() {
+        for (pid in listOf(null, "", "  ")) {
+            val plan = FirestoreMapper.statusPlan(pid, "CANCELLED")
+            assertNull(plan.publicId); assertNull(plan.publicFields)
+            assertEquals(mapOf("status" to "CANCELLED"), plan.privateFields)
+        }
+    }
+    @Test fun `VIP 등록 가능 여부 - 없음·CANCELLED·SEATED 는 등록, WAITING·NO_SHOW 는 차단`() {
+        assertTrue(FirestoreMapper.canRegisterVip(null))
+        assertTrue(FirestoreMapper.canRegisterVip("CANCELLED"))
+        assertTrue(FirestoreMapper.canRegisterVip("SEATED"))
+        assertFalse(FirestoreMapper.canRegisterVip("WAITING"))
+        assertFalse(FirestoreMapper.canRegisterVip("NO_SHOW"))
     }
     @Test fun `메뉴 ID는 숫자로 변환하지 않고 금액은 Long`() {
         assertEquals(MenuItem("abc", "메뉴", 3_000_000_000), FirestoreMapper.menuItem("abc", mapOf("name" to "메뉴", "price" to 3_000_000_000L)))
@@ -68,8 +110,16 @@ class FirestoreMapperTest {
     @Test fun `복귀는 등록과 호출 시각을 보존한다`() {
         assertEquals(mapOf("status" to "WAITING"), FirestoreMapper.waitingStatusFields("WAITING"))
     }
-    @Test fun `VIP는 스펙의 여섯 필드만 생성`() {
-        assertEquals(waiting, FirestoreMapper.vipWaitingDoc("01000000001", 3, 123))
+    @Test fun `VIP private 는 스펙 v3 일곱 필드, public 은 전화번호 없이 세 필드`() {
+        assertEquals(waiting, FirestoreMapper.vipPrivateDoc("01000000001", 3, 123, "pub-1"))
+        assertEquals(mapOf("is_vip" to true, "status" to "WAITING", "created_at" to 123L), FirestoreMapper.vipPublicDoc(123))
+        assertFalse(FirestoreMapper.vipPublicDoc(123).containsKey("phone"))
+    }
+    @Test fun `party_size 는 정수(Long)로 저장 - 규칙의 is int 검사`() {
+        assertTrue(FirestoreMapper.vipPrivateDoc("01000000001", 3, 123, "p")["party_size"] is Long)
+    }
+    @Test fun `호출은 private 의 called_at 만`() {
+        assertEquals(setOf("called_at"), FirestoreMapper.callFields(100).keys)
     }
     @Test fun `주문에는 담당자 added_by만 기록`() {
         assertEquals(setOf("table_id", "menu_id", "menu_name", "menu_price", "quantity", "added_by", "status", "created_at"), FirestoreMapper.orderDoc(line).keys)

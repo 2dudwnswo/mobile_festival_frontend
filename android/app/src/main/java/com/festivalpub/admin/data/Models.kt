@@ -11,10 +11,15 @@ data class TableInfo(
 ) {
     val occupied: Boolean get() = status == "SEATED_PENDING_PAYMENT" || status == "IN_USE"
 }
+/**
+ * 웨이팅 한 팀 (v3: waiting_private 문서). [key] = 문서 ID = 숫자만 남긴 전화번호.
+ * [publicId] 는 짝이 되는 waiting_public 문서 ID. 없을 수도 있다(그때는 private 만 바꾼다).
+ */
 data class Waiting(
     val key: String, val phone: String, val partySize: Long,
     val isVip: Boolean = false, val status: String = "WAITING",
     val createdAt: Long = 0, val calledAt: Long? = null,
+    val publicId: String? = null,
 )
 data class MenuItem(val id: String, val name: String, val price: Long)
 /** 주문 문서 하나 = 메뉴 한 줄. 결제 상태는 주문에 없다. */
